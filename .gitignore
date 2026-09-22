@@ -1,12 +1,38 @@
+# Python
 venv/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+
+# Local experiment outputs
+tests/runs/
+*.log
+
+# Certificates, keys and local secrets
 certs/*.key
 certs/*.crt
 certs/*.srl
+*.pem
+*.key
+*.crt
+*.srl
+.env
+.env.*
+!.env.example
+
+# Kubernetes/Istio downloaded tools and runtime state
 scenario_5/bin/
 scenario_5/runtime-secrets/
 scenario_5/.pf_pid
 scenario_5/.manual_mode
 scenario_5/port_forward_manual.log
-tests/runs/
-__pycache__/
-*.pyc
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
