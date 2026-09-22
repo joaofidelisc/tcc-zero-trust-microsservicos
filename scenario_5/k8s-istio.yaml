@@ -1,0 +1,40 @@
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata:
+  name: service-b-strict-mtls
+spec:
+  selector:
+    matchLabels:
+      app: service-b
+  mtls:
+    mode: STRICT
+---
+apiVersion: security.istio.io/v1
+kind: RequestAuthentication
+metadata:
+  name: service-b-jwt
+spec:
+  selector:
+    matchLabels:
+      app: service-b
+  jwtRules:
+    - issuer: zero-trust-lab
+      jwksUri: http://service-a.default.svc.cluster.local:5000/.well-known/jwks.json
+      forwardOriginalToken: true
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata:
+  name: service-b-only-service-a
+spec:
+  selector:
+    matchLabels:
+      app: service-b
+  action: ALLOW
+  rules:
+    - from:
+        - source:
+            principals:
+              - cluster.local/ns/default/sa/service-a
+            requestPrincipals:
+              - zero-trust-lab/checkout_service
