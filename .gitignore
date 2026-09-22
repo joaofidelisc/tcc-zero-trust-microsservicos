@@ -1,0 +1,12 @@
+venv/
+certs/*.key
+certs/*.crt
+certs/*.srl
+scenario_5/bin/
+scenario_5/runtime-secrets/
+scenario_5/.pf_pid
+scenario_5/.manual_mode
+scenario_5/port_forward_manual.log
+tests/runs/
+__pycache__/
+*.pyc
