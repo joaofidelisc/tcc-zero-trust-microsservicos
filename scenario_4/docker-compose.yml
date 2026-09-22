@@ -1,0 +1,40 @@
+services:
+  service_a:
+    build: ./service_a
+    init: true
+    ports:
+      - "5000:5000"
+    environment:
+      INVENTORY_URL: https://service_b:5000/internal/reserve-stock
+      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
+    depends_on:
+      service_b:
+        condition: service_healthy
+    volumes:
+      - ../certs/ca.crt:/certs/ca.crt:ro
+      - ../certs/service_a.crt:/certs/service_a.crt:ro
+      - ../certs/service_a.key:/certs/service_a.key:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+  service_b:
+    build: ./service_b
+    init: true
+    environment:
+      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
+    volumes:
+      - ../certs/ca.crt:/certs/ca.crt:ro
+      - ../certs/service_b.crt:/certs/service_b.crt:ro
+      - ../certs/service_b.key:/certs/service_b.key:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 5000), timeout=2).close()"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks: [internal]
+networks:
+  internal:
+    driver: bridge
