@@ -97,6 +97,14 @@ A versão atual do TCC contém **12 entradas** na seção Referências, incluind
 
 As três novas referências foram conferidas nas páginas do IEEE Xplore e são compatíveis com o recorte dos últimos três anos. Os DOIs dos RFCs foram conferidos nas páginas oficiais do RFC Editor. Os DOI dos artigos da ACM e do documento NIST correspondem aos identificadores editoriais apresentados nas respectivas páginas.
 
+## String de busca utilizada
+
+Para localizar artigos recentes no Google Scholar, IEEE Xplore e bases acadêmicas de computação, utilize a seguinte string:
+
+`(microservice OR microservices) AND (security OR authentication OR authorization OR "Zero Trust") AND (JWT OR "JSON Web Token" OR mTLS OR "mutual TLS") AND ("service mesh" OR Istio OR Envoy OR Kubernetes) AND (performance OR latency OR throughput OR overhead OR resource)`.
+
+Para restringir aos últimos três anos, aplique o filtro de publicação de 2023 a 2026. Priorize resultados publicados pela IEEE, ACM, USENIX ou periódicos/conferências reconhecidos em Engenharia de Software, Sistemas Distribuídos e Segurança.
+
 ## Ordem recomendada de execução
 
 1. Validar o título, problema e objetivo com a orientadora.
