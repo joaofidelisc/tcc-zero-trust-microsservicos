@@ -34,16 +34,7 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Conferir se todas as citações usadas na introdução aparecem nas referências e vice-versa.
 - Evitar afirmações gerais sobre Docker, Kubernetes, Istio ou segurança que não estejam apoiadas por referência.
 
-### 3. Reforçar a seção Material e Métodos
-
-- Informar, no corpo da metodologia, que o Apêndice A contém os procedimentos completos de reprodução.
-- Conferir se versões de Python, Flask, Gunicorn, Docker, Kind, Kubernetes, Istio, Envoy, Locust e Metrics Server estão registradas.
-- Registrar explicitamente limites de CPU e memória, número de réplicas, quantidade de workers, configuração de rede e parâmetros do gerador de carga.
-- Explicar quais métricas foram coletadas diretamente, quais foram calculadas e qual foi a unidade de observação.
-- Conferir se a descrição deixa claro que o Locust foi executado fora dos serviços avaliados, quando essa foi a configuração efetivamente utilizada.
-- Verificar se C5a e C5b são comparados como pares de mesma plataforma e se a diferença Docker–Kubernetes não é atribuída exclusivamente ao Istio.
-
-### 4. Revisar resultados e interpretação
+### 3. Revisar resultados e interpretação
 
 - Conferir se os valores das tabelas, gráficos, resumo e considerações finais são idênticos.
 - Recalcular, se necessário, as diferenças percentuais de C5a para C5b a partir dos dados consolidados.
@@ -52,7 +43,7 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Separar, quando possível, o consumo das aplicações, sidecars, plano de controle do cluster e gerador de carga.
 - Verificar se percentis são apresentados como médias dos percentis por rodada, e não como percentis globais de todas as requisições.
 
-### 5. Melhorar a reprodutibilidade
+### 4. Melhorar a reprodutibilidade
 
 - Executar `bash validate.sh` em uma máquina limpa ou ambiente isolado e registrar o resultado.
 - Executar ao menos uma rodada de C1–C4 e uma rodada de C5 para confirmar que os comandos documentados continuam funcionando.
@@ -60,7 +51,7 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Confirmar que nenhum certificado, chave privada, segredo JWT, resultado bruto ou binário baixado está versionado.
 - Se os testes forem refeitos, preservar os metadados, a ordem dos cenários e os arquivos brutos junto aos resultados analisados.
 
-### 6. Revisar figuras e tabelas
+### 5. Revisar figuras e tabelas
 
 - Conferir se o gerador de carga está desenhado fora do contêiner ou cluster quando essa for a arquitetura real da execução.
 - Conferir se cada figura identifica claramente Checkout, Inventory, retorno da resposta, JWT, certificados, CA e proxies Envoy quando aplicável.
@@ -68,7 +59,7 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Conferir se títulos de tabelas aparecem antes das tabelas e se fontes aparecem após elas.
 - Confirmar a numeração contínua das figuras no texto principal e a numeração própria caso sejam adicionadas figuras ao apêndice.
 
-### 7. Revisão normativa e textual final
+### 6. Revisão normativa e textual final
 
 - Fazer uma leitura integral procurando erros de digitação, concordância, acentuação e repetição.
 - Conferir o uso consistente de termos em inglês, aspas e siglas.
@@ -77,7 +68,7 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Conferir referências em ordem alfabética, espaçamento simples entre entradas e ausência de negrito indevido.
 - Confirmar que o documento final não ultrapassa 30 páginas, incluindo o Apêndice A.
 
-### 8. Considerações finais
+### 7. Considerações finais
 
 - Responder explicitamente se o objetivo foi atingido.
 - Responder explicitamente se a pergunta de pesquisa foi respondida pelos experimentos.
