@@ -78,11 +78,14 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 
 ## Referências atualmente presentes no TCC
 
-A versão atual do TCC contém **9 entradas** na seção Referências. A lista abaixo registra o endereço oficial ou editorial de cada fonte e o DOI quando ele existe. Documentação técnica, livros e páginas oficiais sem DOI estão identificados como tal.
+A versão atual do TCC contém **12 entradas** na seção Referências, incluindo três artigos recentes (2023–2024) publicados em conferências IEEE. A lista abaixo registra o endereço oficial ou editorial de cada fonte e o DOI quando ele existe. Documentação técnica, livros e páginas oficiais sem DOI estão identificados como tal.
 
 | Referência | Link oficial ou editorial | DOI |
 |---|---|---|
+| Alboqmi, R.; Jahan, S.; Gamble, R. F. *A risk adaptive access control model for the service mesh architecture*. | https://ieeexplore.ieee.org/document/10585800/ | https://doi.org/10.1109/ICMI60790.2024.10585800 |
+| Flora, J.; Teixeira, M.; Antunes, N. *µDetector: Automated intrusion detection for microservices*. | https://ieeexplore.ieee.org/document/10123583/ | https://doi.org/10.1109/SANER56733.2023.00084 |
 | Istio. *Performance and scalability*. | https://istio.io/latest/docs/ops/deployment/performance-and-scalability/ | Não identificado; documentação oficial. |
+| Jack, C. H.; See, K. T.; Lim, T. M.; Ding, Y. H. *An overview analysis of authentication mechanism in microservices-based software architecture: a discussion paper*. | https://ieeexplore.ieee.org/document/10256409/ | https://doi.org/10.1109/ICSECS58457.2023.10256409 |
 | Jones, Bradley e Sakimura. *JSON Web Token (JWT)*, RFC 7519. | https://www.rfc-editor.org/info/rfc7519/ | https://doi.org/10.17487/RFC7519 |
 | Kubernetes. *Resource Management for Pods and Containers*. | https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ | Não identificado; documentação oficial. |
 | Newman, S. *Monolith to Microservices*. | https://www.oreilly.com/library/view/monolith-to-microservices/9781492047834/ | Não identificado; livro da O’Reilly. |
@@ -92,7 +95,7 @@ A versão atual do TCC contém **9 entradas** na seção Referências. A lista a
 | Zdun et al. *Microservice security metrics for secure communication, identity management, and observability*. | https://dl.acm.org/doi/10.1145/3532183 | https://doi.org/10.1145/3532183 |
 | Zhu et al. *Dissecting overheads of service mesh sidecars*. | https://dl.acm.org/doi/10.1145/3620678.3624652 | https://doi.org/10.1145/3620678.3624652 |
 
-Os DOIs dos RFCs foram conferidos nas páginas oficiais do RFC Editor. Os DOI dos artigos da ACM e do documento NIST correspondem aos identificadores editoriais apresentados nas respectivas páginas.
+As três novas referências foram conferidas nas páginas do IEEE Xplore e são compatíveis com o recorte dos últimos três anos. Os DOIs dos RFCs foram conferidos nas páginas oficiais do RFC Editor. Os DOI dos artigos da ACM e do documento NIST correspondem aos identificadores editoriais apresentados nas respectivas páginas.
 
 ## Ordem recomendada de execução
 
