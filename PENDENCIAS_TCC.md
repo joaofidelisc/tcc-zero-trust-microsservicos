@@ -76,6 +76,24 @@ Este documento consolida os pontos da análise do TCC que ainda precisam ser ver
 - Registrar que os resultados caracterizam o ambiente experimental avaliado e não representam uma medida universal de Docker, Kubernetes, Istio ou dos mecanismos de autenticação.
 - Relacionar os próximos passos às limitações efetivamente identificadas.
 
+## Referências atualmente presentes no TCC
+
+A versão atual do TCC contém **9 entradas** na seção Referências. A lista abaixo registra o endereço oficial ou editorial de cada fonte e o DOI quando ele existe. Documentação técnica, livros e páginas oficiais sem DOI estão identificados como tal.
+
+| Referência | Link oficial ou editorial | DOI |
+|---|---|---|
+| Istio. *Performance and scalability*. | https://istio.io/latest/docs/ops/deployment/performance-and-scalability/ | Não identificado; documentação oficial. |
+| Jones, Bradley e Sakimura. *JSON Web Token (JWT)*, RFC 7519. | https://www.rfc-editor.org/info/rfc7519/ | https://doi.org/10.17487/RFC7519 |
+| Kubernetes. *Resource Management for Pods and Containers*. | https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/ | Não identificado; documentação oficial. |
+| Newman, S. *Monolith to Microservices*. | https://www.oreilly.com/library/view/monolith-to-microservices/9781492047834/ | Não identificado; livro da O’Reilly. |
+| Rescorla, E. *The Transport Layer Security (TLS) Protocol Version 1.3*, RFC 8446. | https://www.rfc-editor.org/info/rfc8446/ | https://doi.org/10.17487/RFC8446 |
+| Richardson, C. *Microservices Patterns*. | https://microservices.io/book | Não identificado; livro da Manning. |
+| Rose et al. *Zero Trust Architecture*, NIST SP 800-207. | https://csrc.nist.gov/pubs/sp/800/207/final | https://doi.org/10.6028/NIST.SP.800-207 |
+| Zdun et al. *Microservice security metrics for secure communication, identity management, and observability*. | https://dl.acm.org/doi/10.1145/3532183 | https://doi.org/10.1145/3532183 |
+| Zhu et al. *Dissecting overheads of service mesh sidecars*. | https://dl.acm.org/doi/10.1145/3620678.3624652 | https://doi.org/10.1145/3620678.3624652 |
+
+Os DOIs dos RFCs foram conferidos nas páginas oficiais do RFC Editor. Os DOI dos artigos da ACM e do documento NIST correspondem aos identificadores editoriais apresentados nas respectivas páginas.
+
 ## Ordem recomendada de execução
 
 1. Validar o título, problema e objetivo com a orientadora.
