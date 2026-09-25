@@ -1,0 +1,15 @@
+scenario,role,cpu_ms_per_request,throttled_periods_percent
+scenario_1,checkout_app,2.5185367538672843,100.0
+scenario_1,inventory_app,1.1351014351929134,13.107186946487037
+scenario_2,checkout_app,5.373045967984934,100.0
+scenario_2,inventory_app,1.6235362257301682,9.011627906976745
+scenario_3,checkout_app,2.742645508214018,100.0
+scenario_3,inventory_app,1.0657406423932172,3.488372093023256
+scenario_4,checkout_app,5.6056105912193654,100.0
+scenario_4,inventory_app,1.396108905156734,1.7449109783680334
+scenario_5_k8s_baseline,checkout_app,2.529133604355164,99.91687448046551
+scenario_5_k8s_baseline,inventory_app,0.8734653276770332,0.0
+scenario_5_mesh,checkout_app,5.32652718352308,100.0
+scenario_5_mesh,checkout_sidecar,0.818135729695399,0.0
+scenario_5_mesh,inventory_app,0.9025533491816224,0.0
+scenario_5_mesh,inventory_sidecar,0.5600122547794391,0.0

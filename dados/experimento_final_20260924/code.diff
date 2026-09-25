@@ -1,0 +1,1355 @@
+diff --git a/run_tests.sh b/run_tests.sh
+index e5a7224..429e571 100755
+--- a/run_tests.sh
++++ b/run_tests.sh
+@@ -1,31 +1,42 @@
+ #!/usr/bin/env bash
++# Executa os cenários Docker (C1–C4). Para o experimento completo, com os seis cenários
++# intercalados em cada rodada, use run_experiment.sh, que chama este script por cenário.
+ set -Eeuo pipefail
+ 
+ LAB_DIR="$(cd "$(dirname "$0")" && pwd)"
++source "$LAB_DIR/lib/measure.sh"
+ RESULTS_ROOT="$LAB_DIR/tests/runs"
+ LOCUSTFILE="$LAB_DIR/tests/locustfile.py"
+ REPETITIONS="${REPETITIONS:-5}"
++ROUND_START="${ROUND_START:-1}"
++SCENARIOS="${SCENARIOS:-scenario_1 scenario_2 scenario_3 scenario_4}"
+ DURATION="${DURATION:-60s}"
+ DURATION_SECS="${DURATION%s}"
+ USERS="${USERS:-50}"
+ SPAWN_RATE="${SPAWN_RATE:-10}"
+-WARMUP_SECONDS="${WARMUP_SECONDS:-10}"
++WARMUP_SECONDS="${WARMUP_SECONDS:-15}"
+ COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-5}"
+ INCLUDE_SCENARIO_5="${INCLUDE_SCENARIO_5:-0}"
++SKIP_ANALYSIS="${SKIP_ANALYSIS:-0}"
++export CPU_LIMIT="${CPU_LIMIT:-1.0}"
++export MEM_LIMIT="${MEM_LIMIT:-256m}"
+ EXPERIMENT_ID="${EXPERIMENT_ID:-experiment_$(date +%Y%m%d_%H%M%S)}"
+-EXPERIMENT_DIR="$RESULTS_ROOT/$EXPERIMENT_ID"
+-JWT_SECRET="${JWT_SECRET:-$(openssl rand -hex 32)}"
+-export JWT_SECRET
++EXPERIMENT_DIR="${EXPERIMENT_DIR:-$RESULTS_ROOT/$EXPERIMENT_ID}"
+ 
+ CURRENT_SCENARIO=""
+ CPU_PID=""
++HOST_PID=""
++STAT_PID=""
+ 
+ cleanup() {
+-    if [ -n "${CPU_PID:-}" ] && kill -0 "$CPU_PID" 2>/dev/null; then
+-        kill "$CPU_PID" 2>/dev/null || true
+-        wait "$CPU_PID" 2>/dev/null || true
+-    fi
+-    CPU_PID=""
++    for pid_var in CPU_PID HOST_PID STAT_PID; do
++        local pid="${!pid_var:-}"
++        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
++            kill "$pid" 2>/dev/null || true
++            wait "$pid" 2>/dev/null || true
++        fi
++        printf -v "$pid_var" '%s' ""
++    done
+     if [ -n "${CURRENT_SCENARIO:-}" ] && [ -d "$LAB_DIR/$CURRENT_SCENARIO" ]; then
+         docker compose -f "$LAB_DIR/$CURRENT_SCENARIO/docker-compose.yml" down --remove-orphans >/dev/null 2>&1 || true
+     fi
+@@ -65,26 +76,31 @@ fi
+ if [ ! -f "$LAB_DIR/certs/ca.crt" ] || [ ! -f "$LAB_DIR/certs/service_a.key" ] || [ ! -f "$LAB_DIR/certs/service_b.key" ]; then
+     bash "$LAB_DIR/certs/generate_certs.sh"
+ fi
++bash "$LAB_DIR/certs/generate_jwt_keys.sh" >/dev/null
+ 
+-if [ -e "$EXPERIMENT_DIR" ]; then
++if [ -e "$EXPERIMENT_DIR" ] && [ "${ALLOW_EXISTING_EXPERIMENT:-0}" != "1" ]; then
+     echo "O diretório de experimento já existe e não será sobrescrito: $EXPERIMENT_DIR" >&2
+     exit 3
+ fi
+ mkdir -p "$EXPERIMENT_DIR"
+-printf 'round,position,scenario,started_at\n' >"$EXPERIMENT_DIR/scenario_order.csv"
+-{
+-    printf 'experiment_id=%s\n' "$EXPERIMENT_ID"
+-    printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
+-    printf 'repetitions=%s\n' "$REPETITIONS"
+-    printf 'duration=%s\n' "$DURATION"
+-    printf 'users=%s\n' "$USERS"
+-    printf 'spawn_rate=%s\n' "$SPAWN_RATE"
+-    printf 'warmup_seconds=%s\n' "$WARMUP_SECONDS"
+-    printf 'kernel=%s\n' "$(uname -srmo)"
+-    printf 'docker=%s\n' "$(docker version --format '{{.Server.Version}}' 2>/dev/null || printf unavailable)"
+-    printf 'compose=%s\n' "$(docker compose version --short)"
+-    printf 'memory_bytes=%s\n' "$(awk '/MemTotal/{print $2*1024}' /proc/meminfo)"
+-} >"$EXPERIMENT_DIR/metadata.env"
++[ -f "$EXPERIMENT_DIR/scenario_order.csv" ] || printf 'round,position,scenario,started_at\n' >"$EXPERIMENT_DIR/scenario_order.csv"
++if [ ! -f "$EXPERIMENT_DIR/metadata.env" ]; then
++    {
++        printf 'experiment_id=%s\n' "$EXPERIMENT_ID"
++        printf 'started_at=%s\n' "$(date --iso-8601=seconds)"
++        printf 'repetitions=%s\n' "$REPETITIONS"
++        printf 'duration=%s\n' "$DURATION"
++        printf 'users=%s\n' "$USERS"
++        printf 'spawn_rate=%s\n' "$SPAWN_RATE"
++        printf 'warmup_seconds=%s\n' "$WARMUP_SECONDS"
++        printf 'cpu_limit=%s\n' "$CPU_LIMIT"
++        printf 'mem_limit=%s\n' "$MEM_LIMIT"
++        printf 'kernel=%s\n' "$(uname -srmo)"
++        printf 'docker=%s\n' "$(docker version --format '{{.Server.Version}}' 2>/dev/null || printf unavailable)"
++        printf 'compose=%s\n' "$(docker compose version --short)"
++        printf 'memory_bytes=%s\n' "$(awk '/MemTotal/{print $2*1024}' /proc/meminfo)"
++    } >"$EXPERIMENT_DIR/metadata.env"
++fi
+ 
+ collect_docker_metrics() {
+     local compose_file="$1"
+@@ -106,7 +122,14 @@ collect_docker_metrics() {
+ }
+ 
+ validate_checkout() {
+-    curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5000/api/v1/checkout | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"'
++    for attempt in $(seq 1 30); do
++        if curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5000/api/v1/checkout 2>/dev/null | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"' 2>/dev/null; then
++            return 0
++        fi
++        sleep 2
++    done
++    echo "O Checkout não concluiu uma compra válida em 127.0.0.1:5000." >&2
++    return 1
+ }
+ 
+ run_scenario() {
+@@ -114,25 +137,42 @@ run_scenario() {
+     local round_dir="$2"
+     local result_dir="$round_dir/$scenario_name"
+     local compose_file="$LAB_DIR/$scenario_name/docker-compose.yml"
++    local ramp
++    ramp="$(ramp_seconds)"
+     mkdir -p "$result_dir"
+     CURRENT_SCENARIO="$scenario_name"
++    echo "==> $(basename "$round_dir") $scenario_name"
+     docker compose -f "$compose_file" up -d --build --wait --wait-timeout 180
+     validate_checkout
+-    sleep "$WARMUP_SECONDS"
+-    collect_docker_metrics "$compose_file" "$((DURATION_SECS + 5))" "$result_dir/resources.csv" &
++    if [ "$scenario_name" = "scenario_3" ] || [ "$scenario_name" = "scenario_4" ]; then
++        record_tls_docker "$compose_file" "$result_dir/tls.txt"
++    fi
++    run_warmup http://127.0.0.1:5000 "$result_dir/warmup.log"
++
++    sample_host "$result_dir/host.csv" &
++    HOST_PID=$!
++    collect_docker_metrics "$compose_file" "$((DURATION_SECS + ramp + 5))" "$result_dir/resources.csv" &
+     CPU_PID=$!
+-    "$LOCUST_BIN" -f "$LOCUSTFILE" --headless -u "$USERS" -r "$SPAWN_RATE" -t "$DURATION" -H http://127.0.0.1:5000 --csv="$result_dir/results" --csv-full-history
++    # O início da janela de CPU coincide com o fim da subida dos usuários (--reset-stats).
++    (sleep "$ramp"; capture_cpu_stat_docker "$compose_file" start "$result_dir/cpu_stat.csv") &
++    STAT_PID=$!
++    run_measured_locust http://127.0.0.1:5000 "$result_dir"
++    capture_cpu_stat_docker "$compose_file" end "$result_dir/cpu_stat.csv"
++    wait "$STAT_PID" 2>/dev/null || true
+     wait "$CPU_PID" || true
+-    CPU_PID=""
++    kill "$HOST_PID" 2>/dev/null || true
++    wait "$HOST_PID" 2>/dev/null || true
++    CPU_PID=""; HOST_PID=""; STAT_PID=""
+     docker compose -f "$compose_file" down --remove-orphans
+     CURRENT_SCENARIO=""
+     sleep "$COOLDOWN_SECONDS"
+ }
+ 
+-for round_number in $(seq 1 "$REPETITIONS"); do
++round_end=$((ROUND_START + REPETITIONS - 1))
++for round_number in $(seq "$ROUND_START" "$round_end"); do
+     round_dir="$EXPERIMENT_DIR/round_$(printf '%02d' "$round_number")"
+     mkdir -p "$round_dir"
+-    mapfile -t scenario_order < <(printf 'scenario_1\nscenario_2\nscenario_3\nscenario_4\n' | shuf)
++    mapfile -t scenario_order < <(printf '%s\n' $SCENARIOS | shuf)
+     position=0
+     for scenario_name in "${scenario_order[@]}"; do
+         position=$((position + 1))
+@@ -142,8 +182,10 @@ for round_number in $(seq 1 "$REPETITIONS"); do
+ done
+ 
+ if [ "$INCLUDE_SCENARIO_5" = "1" ]; then
+-    ALLOW_EXISTING_EXPERIMENT=1 EXPERIMENT_ID="$EXPERIMENT_ID" EXPERIMENT_DIR="$EXPERIMENT_DIR" REPETITIONS="$REPETITIONS" DURATION="$DURATION" USERS="$USERS" SPAWN_RATE="$SPAWN_RATE" WARMUP_SECONDS="$WARMUP_SECONDS" bash "$LAB_DIR/scenario_5/run_scenario_5.sh"
++    ALLOW_EXISTING_EXPERIMENT=1 SKIP_ANALYSIS=1 EXPERIMENT_ID="$EXPERIMENT_ID" EXPERIMENT_DIR="$EXPERIMENT_DIR" REPETITIONS="$REPETITIONS" ROUND_START="$ROUND_START" DURATION="$DURATION" USERS="$USERS" SPAWN_RATE="$SPAWN_RATE" WARMUP_SECONDS="$WARMUP_SECONDS" bash "$LAB_DIR/scenario_5/run_scenario_5.sh"
+ fi
+ 
+-"$ANALYSIS_PYTHON" "$LAB_DIR/tests/generate_graphs.py" "$EXPERIMENT_DIR"
+-echo "Experimento concluído sem sobrescrever rodadas anteriores: $EXPERIMENT_DIR"
++if [ "$SKIP_ANALYSIS" != "1" ]; then
++    "$ANALYSIS_PYTHON" "$LAB_DIR/tests/generate_graphs.py" "$EXPERIMENT_DIR"
++fi
++echo "Execução concluída sem sobrescrever rodadas anteriores: $EXPERIMENT_DIR"
+diff --git a/scenario_1/docker-compose.yml b/scenario_1/docker-compose.yml
+index 4efe600..38b055b 100644
+--- a/scenario_1/docker-compose.yml
++++ b/scenario_1/docker-compose.yml
+@@ -2,6 +2,8 @@ services:
+   service_a:
+     build: ./service_a
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     ports:
+       - "5000:5000"
+     environment:
+@@ -18,6 +20,8 @@ services:
+   service_b:
+     build: ./service_b
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     healthcheck:
+       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+       interval: 2s
+diff --git a/scenario_2/docker-compose.yml b/scenario_2/docker-compose.yml
+index b0c99cd..74b6641 100644
+--- a/scenario_2/docker-compose.yml
++++ b/scenario_2/docker-compose.yml
+@@ -2,11 +2,15 @@ services:
+   service_a:
+     build: ./service_a
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     ports:
+       - "5000:5000"
+     environment:
+       INVENTORY_URL: http://service_b:5000/internal/reserve-stock
+-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
++      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
++    volumes:
++      - ../certs/jwt_private.pem:/keys/jwt_private.pem:ro
+     depends_on:
+       service_b:
+         condition: service_healthy
+@@ -19,8 +23,12 @@ services:
+   service_b:
+     build: ./service_b
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     environment:
+-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
++      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
++    volumes:
++      - ../certs/jwt_public.pem:/keys/jwt_public.pem:ro
+     healthcheck:
+       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+       interval: 2s
+diff --git a/scenario_2/service_a/app.py b/scenario_2/service_a/app.py
+index 17fac57..8c07260 100644
+--- a/scenario_2/service_a/app.py
++++ b/scenario_2/service_a/app.py
+@@ -7,6 +7,7 @@ import time
+ 
+ import jwt
+ import requests
++from cryptography.hazmat.primitives.serialization import load_pem_private_key
+ from flask import Flask, jsonify, request
+ 
+ app = Flask(__name__)
+@@ -14,16 +15,16 @@ app = Flask(__name__)
+ INVENTORY_URL = os.getenv(
+     "INVENTORY_URL", "http://service_b:5000/internal/reserve-stock"
+ )
+-JWT_SECRET = os.getenv("JWT_SECRET")
++JWT_PRIVATE_KEY_PATH = os.getenv("JWT_PRIVATE_KEY_PATH", "/keys/jwt_private.pem")
++JWT_KEY_ID = "zt-lab-rs256-2026"
+ JWT_ISSUER = "zero-trust-lab"
+ JWT_SUBJECT = "checkout_service"
+ REQUEST_TIMEOUT = (1.0, 3.0)
+ 
+-if not JWT_SECRET:
+-    raise RuntimeError("JWT_SECRET deve ser definido")
+-
+ _session_lock = threading.Lock()
+ _http_session = None
++_key_lock = threading.Lock()
++_private_key = None
+ 
+ 
+ def get_session():
+@@ -40,6 +41,16 @@ def get_session():
+     return _http_session
+ 
+ 
++def get_private_key():
++    global _private_key
++    if _private_key is None:
++        with _key_lock:
++            if _private_key is None:
++                with open(JWT_PRIVATE_KEY_PATH, "rb") as key_file:
++                    _private_key = load_pem_private_key(key_file.read(), password=None)
++    return _private_key
++
++
+ def generate_internal_token():
+     now = datetime.datetime.now(datetime.timezone.utc)
+     return jwt.encode(
+@@ -49,8 +60,9 @@ def generate_internal_token():
+             "iat": now,
+             "exp": now + datetime.timedelta(seconds=30),
+         },
+-        JWT_SECRET,
+-        algorithm="HS256",
++        get_private_key(),
++        algorithm="RS256",
++        headers={"kid": JWT_KEY_ID},
+     )
+ 
+ 
+diff --git a/scenario_2/service_a/requirements.txt b/scenario_2/service_a/requirements.txt
+index b344fea..910ee9a 100644
+--- a/scenario_2/service_a/requirements.txt
++++ b/scenario_2/service_a/requirements.txt
+@@ -1,7 +1,9 @@
+ blinker==1.8.2
+ certifi==2024.7.4
++cffi==1.16.0
+ charset-normalizer==3.3.2
+ click==8.1.7
++cryptography==42.0.8
+ Flask==3.0.3
+ gunicorn==22.0.0
+ idna==3.7
+@@ -9,6 +11,7 @@ itsdangerous==2.2.0
+ Jinja2==3.1.4
+ MarkupSafe==2.1.5
+ packaging==24.1
++pycparser==2.22
+ PyJWT==2.8.0
+ requests==2.31.0
+ urllib3==2.2.2
+diff --git a/scenario_2/service_b/app.py b/scenario_2/service_b/app.py
+index c4065ea..f1d606f 100644
+--- a/scenario_2/service_b/app.py
++++ b/scenario_2/service_b/app.py
+@@ -1,19 +1,31 @@
+-"""Cenário 2: Inventory Service protegido por JWT HS256."""
++"""Cenário 2: Inventory Service protegido por JWT RS256."""
+ 
+ import os
++import threading
+ from functools import wraps
+ 
+ import jwt
++from cryptography.hazmat.primitives.serialization import load_pem_public_key
+ from flask import Flask, jsonify, request
+ 
+ app = Flask(__name__)
+ 
+-JWT_SECRET = os.getenv("JWT_SECRET")
++JWT_PUBLIC_KEY_PATH = os.getenv("JWT_PUBLIC_KEY_PATH", "/keys/jwt_public.pem")
+ JWT_ISSUER = "zero-trust-lab"
+ JWT_SUBJECT = "checkout_service"
+ 
+-if not JWT_SECRET:
+-    raise RuntimeError("JWT_SECRET deve ser definido")
++_key_lock = threading.Lock()
++_public_key = None
++
++
++def get_public_key():
++    global _public_key
++    if _public_key is None:
++        with _key_lock:
++            if _public_key is None:
++                with open(JWT_PUBLIC_KEY_PATH, "rb") as key_file:
++                    _public_key = load_pem_public_key(key_file.read())
++    return _public_key
+ 
+ 
+ def require_jwt(function):
+@@ -27,8 +39,8 @@ def require_jwt(function):
+         try:
+             payload = jwt.decode(
+                 token,
+-                JWT_SECRET,
+-                algorithms=["HS256"],
++                get_public_key(),
++                algorithms=["RS256"],
+                 issuer=JWT_ISSUER,
+                 options={"require": ["exp", "iat", "iss", "sub"]},
+             )
+diff --git a/scenario_2/service_b/requirements.txt b/scenario_2/service_b/requirements.txt
+index 6ea6052..2bf1c46 100644
+--- a/scenario_2/service_b/requirements.txt
++++ b/scenario_2/service_b/requirements.txt
+@@ -1,10 +1,13 @@
+ blinker==1.8.2
++cffi==1.16.0
+ click==8.1.7
++cryptography==42.0.8
+ Flask==3.0.3
+ gunicorn==22.0.0
+ itsdangerous==2.2.0
+ Jinja2==3.1.4
+ MarkupSafe==2.1.5
+ packaging==24.1
++pycparser==2.22
+ PyJWT==2.8.0
+ Werkzeug==3.0.3
+diff --git a/scenario_3/docker-compose.yml b/scenario_3/docker-compose.yml
+index db125af..ba30faf 100644
+--- a/scenario_3/docker-compose.yml
++++ b/scenario_3/docker-compose.yml
+@@ -2,6 +2,8 @@ services:
+   service_a:
+     build: ./service_a
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     ports:
+       - "5000:5000"
+     environment:
+@@ -22,6 +24,8 @@ services:
+   service_b:
+     build: ./service_b
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     volumes:
+       - ../certs/ca.crt:/certs/ca.crt:ro
+       - ../certs/service_b.crt:/certs/service_b.crt:ro
+diff --git a/scenario_4/docker-compose.yml b/scenario_4/docker-compose.yml
+index ee7e12d..8cb79fb 100644
+--- a/scenario_4/docker-compose.yml
++++ b/scenario_4/docker-compose.yml
+@@ -2,11 +2,13 @@ services:
+   service_a:
+     build: ./service_a
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     ports:
+       - "5000:5000"
+     environment:
+       INVENTORY_URL: https://service_b:5000/internal/reserve-stock
+-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
++      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+     depends_on:
+       service_b:
+         condition: service_healthy
+@@ -14,6 +16,7 @@ services:
+       - ../certs/ca.crt:/certs/ca.crt:ro
+       - ../certs/service_a.crt:/certs/service_a.crt:ro
+       - ../certs/service_a.key:/certs/service_a.key:ro
++      - ../certs/jwt_private.pem:/keys/jwt_private.pem:ro
+     healthcheck:
+       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
+       interval: 2s
+@@ -23,12 +26,15 @@ services:
+   service_b:
+     build: ./service_b
+     init: true
++    cpus: "${CPU_LIMIT:-1.0}"
++    mem_limit: "${MEM_LIMIT:-256m}"
+     environment:
+-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
++      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+     volumes:
+       - ../certs/ca.crt:/certs/ca.crt:ro
+       - ../certs/service_b.crt:/certs/service_b.crt:ro
+       - ../certs/service_b.key:/certs/service_b.key:ro
++      - ../certs/jwt_public.pem:/keys/jwt_public.pem:ro
+     healthcheck:
+       test: ["CMD", "python", "-c", "import socket; socket.create_connection(('127.0.0.1', 5000), timeout=2).close()"]
+       interval: 2s
+diff --git a/scenario_4/service_a/app.py b/scenario_4/service_a/app.py
+index 51c361a..1789d6b 100644
+--- a/scenario_4/service_a/app.py
++++ b/scenario_4/service_a/app.py
+@@ -7,6 +7,7 @@ import time
+ 
+ import jwt
+ import requests
++from cryptography.hazmat.primitives.serialization import load_pem_private_key
+ from flask import Flask, jsonify, request
+ 
+ app = Flask(__name__)
+@@ -14,16 +15,16 @@ app = Flask(__name__)
+ INVENTORY_URL = os.getenv(
+     "INVENTORY_URL", "https://service_b:5000/internal/reserve-stock"
+ )
+-JWT_SECRET = os.getenv("JWT_SECRET")
++JWT_PRIVATE_KEY_PATH = os.getenv("JWT_PRIVATE_KEY_PATH", "/keys/jwt_private.pem")
++JWT_KEY_ID = "zt-lab-rs256-2026"
+ JWT_ISSUER = "zero-trust-lab"
+ JWT_SUBJECT = "checkout_service"
+ REQUEST_TIMEOUT = (1.0, 3.0)
+ 
+-if not JWT_SECRET:
+-    raise RuntimeError("JWT_SECRET deve ser definido")
+-
+ _session_lock = threading.Lock()
+ _http_session = None
++_key_lock = threading.Lock()
++_private_key = None
+ 
+ 
+ def get_session():
+@@ -42,6 +43,16 @@ def get_session():
+     return _http_session
+ 
+ 
++def get_private_key():
++    global _private_key
++    if _private_key is None:
++        with _key_lock:
++            if _private_key is None:
++                with open(JWT_PRIVATE_KEY_PATH, "rb") as key_file:
++                    _private_key = load_pem_private_key(key_file.read(), password=None)
++    return _private_key
++
++
+ def generate_internal_token():
+     now = datetime.datetime.now(datetime.timezone.utc)
+     return jwt.encode(
+@@ -51,8 +62,9 @@ def generate_internal_token():
+             "iat": now,
+             "exp": now + datetime.timedelta(seconds=30),
+         },
+-        JWT_SECRET,
+-        algorithm="HS256",
++        get_private_key(),
++        algorithm="RS256",
++        headers={"kid": JWT_KEY_ID},
+     )
+ 
+ 
+diff --git a/scenario_4/service_a/requirements.txt b/scenario_4/service_a/requirements.txt
+index b344fea..910ee9a 100644
+--- a/scenario_4/service_a/requirements.txt
++++ b/scenario_4/service_a/requirements.txt
+@@ -1,7 +1,9 @@
+ blinker==1.8.2
+ certifi==2024.7.4
++cffi==1.16.0
+ charset-normalizer==3.3.2
+ click==8.1.7
++cryptography==42.0.8
+ Flask==3.0.3
+ gunicorn==22.0.0
+ idna==3.7
+@@ -9,6 +11,7 @@ itsdangerous==2.2.0
+ Jinja2==3.1.4
+ MarkupSafe==2.1.5
+ packaging==24.1
++pycparser==2.22
+ PyJWT==2.8.0
+ requests==2.31.0
+ urllib3==2.2.2
+diff --git a/scenario_4/service_b/app.py b/scenario_4/service_b/app.py
+index 0e44ef9..1c31241 100644
+--- a/scenario_4/service_b/app.py
++++ b/scenario_4/service_b/app.py
+@@ -1,19 +1,31 @@
+ """Cenário 4: Inventory Service protegido por mTLS e JWT."""
+ 
+ import os
++import threading
+ from functools import wraps
+ 
+ import jwt
++from cryptography.hazmat.primitives.serialization import load_pem_public_key
+ from flask import Flask, jsonify, request
+ 
+ app = Flask(__name__)
+ 
+-JWT_SECRET = os.getenv("JWT_SECRET")
++JWT_PUBLIC_KEY_PATH = os.getenv("JWT_PUBLIC_KEY_PATH", "/keys/jwt_public.pem")
+ JWT_ISSUER = "zero-trust-lab"
+ JWT_SUBJECT = "checkout_service"
+ 
+-if not JWT_SECRET:
+-    raise RuntimeError("JWT_SECRET deve ser definido")
++_key_lock = threading.Lock()
++_public_key = None
++
++
++def get_public_key():
++    global _public_key
++    if _public_key is None:
++        with _key_lock:
++            if _public_key is None:
++                with open(JWT_PUBLIC_KEY_PATH, "rb") as key_file:
++                    _public_key = load_pem_public_key(key_file.read())
++    return _public_key
+ 
+ 
+ def require_jwt(function):
+@@ -27,8 +39,8 @@ def require_jwt(function):
+         try:
+             payload = jwt.decode(
+                 token,
+-                JWT_SECRET,
+-                algorithms=["HS256"],
++                get_public_key(),
++                algorithms=["RS256"],
+                 issuer=JWT_ISSUER,
+                 options={"require": ["exp", "iat", "iss", "sub"]},
+             )
+diff --git a/scenario_4/service_b/requirements.txt b/scenario_4/service_b/requirements.txt
+index 6ea6052..2bf1c46 100644
+--- a/scenario_4/service_b/requirements.txt
++++ b/scenario_4/service_b/requirements.txt
+@@ -1,10 +1,13 @@
+ blinker==1.8.2
++cffi==1.16.0
+ click==8.1.7
++cryptography==42.0.8
+ Flask==3.0.3
+ gunicorn==22.0.0
+ itsdangerous==2.2.0
+ Jinja2==3.1.4
+ MarkupSafe==2.1.5
+ packaging==24.1
++pycparser==2.22
+ PyJWT==2.8.0
+ Werkzeug==3.0.3
+diff --git a/scenario_5/common.sh b/scenario_5/common.sh
+index ae06aad..85ec6d0 100755
+--- a/scenario_5/common.sh
++++ b/scenario_5/common.sh
+@@ -7,8 +7,8 @@ RUNTIME_DIR="$SCENARIO_DIR/runtime-secrets"
+ source "$SCENARIO_DIR/versions.env"
+ 
+ CLUSTER_NAME="${CLUSTER_NAME:-zt-lab-corrected}"
+-SERVICE_A_IMAGE="zero-trust-lab-service-a:corrected-v1"
+-SERVICE_B_IMAGE="zero-trust-lab-service-b:corrected-v1"
++SERVICE_A_IMAGE="zero-trust-lab-service-a:corrected-v2"
++SERVICE_B_IMAGE="zero-trust-lab-service-b:corrected-v2"
+ METRICS_SERVER_URL="https://github.com/kubernetes-sigs/metrics-server/releases/download/$METRICS_SERVER_VERSION/components.yaml"
+ export PATH="$BIN_DIR:$PATH"
+ 
+@@ -61,13 +61,13 @@ build_images() {
+ }
+ 
+ generate_signing_key() {
++    # Mesmo par RSA de 3.072 bits usado em C2 e C4 (certs/generate_jwt_keys.sh).
++    bash "$LAB_DIR/certs/generate_jwt_keys.sh"
+     mkdir -p "$RUNTIME_DIR"
+     chmod 700 "$RUNTIME_DIR"
+-    if [ ! -f "$RUNTIME_DIR/jwt-private.pem" ]; then
+-        openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$RUNTIME_DIR/jwt-private.pem"
+-        chmod 600 "$RUNTIME_DIR/jwt-private.pem"
+-    fi
+-    openssl pkey -in "$RUNTIME_DIR/jwt-private.pem" -pubout -out "$RUNTIME_DIR/jwt-public.pem"
++    cp "$LAB_DIR/certs/jwt_private.pem" "$RUNTIME_DIR/jwt-private.pem"
++    cp "$LAB_DIR/certs/jwt_public.pem" "$RUNTIME_DIR/jwt-public.pem"
++    chmod 600 "$RUNTIME_DIR/jwt-private.pem"
+     chmod 644 "$RUNTIME_DIR/jwt-public.pem"
+ }
+ 
+@@ -86,7 +86,7 @@ create_cluster() {
+         echo "O cluster $CLUSTER_NAME já existe. Encerre-o antes de continuar." >&2
+         return 1
+     fi
+-    kind create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --wait 180s
++    kind create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$SCENARIO_DIR/kind-config.yaml" --wait 180s
+     kind load docker-image "$SERVICE_A_IMAGE" "$SERVICE_B_IMAGE" --name "$CLUSTER_NAME"
+ }
+ 
+@@ -118,8 +118,12 @@ deploy_apps() {
+     if [ "$mode" = "baseline" ]; then
+         kubectl label namespace default istio-injection=disabled --overwrite
+     fi
++    local sign_jwt="false"
++    if [ "$mode" = "mesh" ]; then
++        sign_jwt="true"
++    fi
+     create_jwt_secret
+-    kubectl apply -f "$SCENARIO_DIR/k8s-app.yaml"
++    sed "s/__SIGN_JWT__/$sign_jwt/" "$SCENARIO_DIR/k8s-app.yaml" | kubectl apply -f -
+     kubectl rollout status deployment/service-a --timeout=180s
+     kubectl rollout status deployment/service-b --timeout=180s
+     if [ "$mode" = "mesh" ]; then
+@@ -130,16 +134,22 @@ deploy_apps() {
+ }
+ 
+ start_port_forward() {
++    # Mantido o nome por compatibilidade. Por padrão o acesso usa a NodePort mapeada
++    # pelo Kind (ACCESS_MODE=nodeport); ACCESS_MODE=portforward reproduz o desenho antigo.
+     local log_file="$1"
+-    kubectl port-forward service/service-a 5005:5000 >"$log_file" 2>&1 &
+-    PF_PID=$!
+-    for attempt in $(seq 1 30); do
++    if [ "${ACCESS_MODE:-nodeport}" = "portforward" ]; then
++        kubectl port-forward service/service-a 5005:5000 >"$log_file" 2>&1 &
++        PF_PID=$!
++    else
++        printf 'acesso via NodePort 30500 mapeada em 127.0.0.1:5005\n' >"$log_file"
++    fi
++    for attempt in $(seq 1 60); do
+         if curl -fsS --max-time 2 http://127.0.0.1:5005/health >/dev/null 2>&1; then
+             return 0
+         fi
+         sleep 1
+     done
+-    echo "Port-forward não ficou pronto; consulte $log_file." >&2
++    echo "O Checkout não respondeu em 127.0.0.1:5005; consulte $log_file." >&2
+     return 1
+ }
+ 
+@@ -177,7 +187,17 @@ collect_k8s_metrics() {
+ }
+ 
+ validate_checkout() {
+-    curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"'
++    # Logo após a criação do cluster, o DNS interno e as regras de rede do service-b podem
++    # ainda não estar ativos; tenta por até ~60 s antes de considerar falha.
++    kubectl rollout status deployment/coredns -n kube-system --timeout=120s >/dev/null
++    for attempt in $(seq 1 30); do
++        if curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout 2>/dev/null | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"' 2>/dev/null; then
++            return 0
++        fi
++        sleep 2
++    done
++    echo "O Checkout não concluiu uma compra válida em 127.0.0.1:5005." >&2
++    return 1
+ }
+ 
+ validate_mesh_rejection_without_jwt() {
+diff --git a/scenario_5/k8s-app.yaml b/scenario_5/k8s-app.yaml
+index 1a5dafc..7e6fb04 100644
+--- a/scenario_5/k8s-app.yaml
++++ b/scenario_5/k8s-app.yaml
+@@ -27,13 +27,15 @@ spec:
+       serviceAccountName: service-a
+       containers:
+         - name: service-a
+-          image: zero-trust-lab-service-a:corrected-v1
++          image: zero-trust-lab-service-a:corrected-v2
+           imagePullPolicy: Never
+           ports:
+             - containerPort: 5000
+           env:
+             - name: INVENTORY_URL
+               value: http://service-b:5000/internal/reserve-stock
++            - name: SIGN_JWT
++              value: "__SIGN_JWT__"
+           volumeMounts:
+             - name: jwt-signing-key
+               mountPath: /var/run/secrets/zt-jwt
+@@ -68,11 +70,13 @@ kind: Service
+ metadata:
+   name: service-a
+ spec:
++  type: NodePort
+   selector:
+     app: service-a
+   ports:
+     - port: 5000
+       targetPort: 5000
++      nodePort: 30500
+ ---
+ apiVersion: apps/v1
+ kind: Deployment
+@@ -93,7 +97,7 @@ spec:
+       serviceAccountName: service-b
+       containers:
+         - name: service-b
+-          image: zero-trust-lab-service-b:corrected-v1
++          image: zero-trust-lab-service-b:corrected-v2
+           imagePullPolicy: Never
+           ports:
+             - containerPort: 5000
+diff --git a/scenario_5/run_scenario_5.sh b/scenario_5/run_scenario_5.sh
+index 2b8878d..6f9ca94 100755
+--- a/scenario_5/run_scenario_5.sh
++++ b/scenario_5/run_scenario_5.sh
+@@ -1,26 +1,38 @@
+ #!/usr/bin/env bash
++# Executa C5a (Kubernetes sem malha) e C5b (Kubernetes com Istio/Envoy). Para o experimento
++# completo, com os seis cenários intercalados, use run_experiment.sh na raiz do laboratório.
+ set -Eeuo pipefail
+ 
+ SCENARIO_DIR="$(cd "$(dirname "$0")" && pwd)"
+ source "$SCENARIO_DIR/common.sh"
++source "$LAB_DIR/lib/measure.sh"
+ 
+ REPETITIONS="${REPETITIONS:-3}"
++ROUND_START="${ROUND_START:-1}"
++MODES="${MODES:-baseline mesh}"
+ DURATION="${DURATION:-60s}"
+ DURATION_SECS="${DURATION%s}"
+ USERS="${USERS:-50}"
+ SPAWN_RATE="${SPAWN_RATE:-10}"
+-WARMUP_SECONDS="${WARMUP_SECONDS:-10}"
++WARMUP_SECONDS="${WARMUP_SECONDS:-15}"
++SKIP_ANALYSIS="${SKIP_ANALYSIS:-0}"
+ EXPERIMENT_ID="${EXPERIMENT_ID:-experiment_$(date +%Y%m%d_%H%M%S)}"
+ EXPERIMENT_DIR="${EXPERIMENT_DIR:-$LAB_DIR/tests/runs/$EXPERIMENT_ID}"
+ LOCUSTFILE="$LAB_DIR/tests/locustfile.py"
+ PF_PID=""
+ METRICS_PID=""
++HOST_PID=""
++STAT_PID=""
+ 
+ cleanup() {
+-    if [ -n "${METRICS_PID:-}" ] && kill -0 "$METRICS_PID" 2>/dev/null; then
+-        kill "$METRICS_PID" 2>/dev/null || true
+-        wait "$METRICS_PID" 2>/dev/null || true
+-    fi
++    for pid_var in METRICS_PID HOST_PID STAT_PID; do
++        local pid="${!pid_var:-}"
++        if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
++            kill "$pid" 2>/dev/null || true
++            wait "$pid" 2>/dev/null || true
++        fi
++        printf -v "$pid_var" '%s' ""
++    done
+     stop_port_forward
+     delete_cluster
+ }
+@@ -38,15 +50,34 @@ fi
+ generate_signing_key
+ build_images
+ mkdir -p "$EXPERIMENT_DIR"
+-printf 'round,position,mode,started_at\n' >"$EXPERIMENT_DIR/scenario_5_order.csv"
++[ -f "$EXPERIMENT_DIR/scenario_5_order.csv" ] || printf 'round,position,mode,started_at\n' >"$EXPERIMENT_DIR/scenario_5_order.csv"
++if ! grep -q '^kind=' "$EXPERIMENT_DIR/metadata.env" 2>/dev/null; then
++    {
++        printf 'kind=%s\n' "$KIND_VERSION"
++        printf 'kubernetes=%s\n' "$KUBECTL_VERSION"
++        printf 'istio=%s\n' "$ISTIO_VERSION"
++        printf 'metrics_server=%s\n' "$METRICS_SERVER_VERSION"
++        printf 'kind_node_image=%s\n' "$KIND_NODE_IMAGE"
++        printf 'k8s_access=%s\n' "${ACCESS_MODE:-nodeport}"
++    } >>"$EXPERIMENT_DIR/metadata.env"
++fi
+ 
+-for round_number in $(seq 1 "$REPETITIONS"); do
++round_end=$((ROUND_START + REPETITIONS - 1))
++for round_number in $(seq "$ROUND_START" "$round_end"); do
+     round_dir="$EXPERIMENT_DIR/round_$(printf '%02d' "$round_number")"
+     mkdir -p "$round_dir"
+     position=0
+-    for mode in $(printf 'baseline\nmesh\n' | shuf); do
++    for mode in $(printf '%s\n' $MODES | shuf); do
+         position=$((position + 1))
+         printf '%s,%s,%s,%s\n' "$round_number" "$position" "$mode" "$(date --iso-8601=seconds)" >>"$EXPERIMENT_DIR/scenario_5_order.csv"
++        if [ "$mode" = "mesh" ]; then
++            result_name="scenario_5_mesh"
++        else
++            result_name="scenario_5_k8s_baseline"
++        fi
++        result_dir="$round_dir/$result_name"
++        mkdir -p "$result_dir"
++        echo "==> $(basename "$round_dir") $result_name"
+         cleanup
+         create_cluster
+         install_metrics_server
+@@ -54,26 +85,35 @@ for round_number in $(seq 1 "$REPETITIONS"); do
+             install_istio
+         fi
+         deploy_apps "$mode"
+-        start_port_forward "$round_dir/port_forward_$mode.log"
++        start_port_forward "$result_dir/access.log"
+         validate_checkout
+         if [ "$mode" = "mesh" ]; then
+             validate_mesh_rejection_without_jwt
+-            result_name="scenario_5_mesh"
+-        else
+-            result_name="scenario_5_k8s_baseline"
++            printf 'mesh_rejection_without_jwt=ok\n' >"$result_dir/security_check.txt"
++            kubectl get pod -l app=service-a -o jsonpath='{.items[0].spec.containers[?(@.name=="istio-proxy")].resources}{.items[0].spec.initContainers[?(@.name=="istio-proxy")].resources}' >"$result_dir/sidecar_resources.json" 2>/dev/null || true
+         fi
+-        result_dir="$round_dir/$result_name"
+-        mkdir -p "$result_dir"
+-        sleep "$WARMUP_SECONDS"
+-        collect_k8s_metrics "$((DURATION_SECS + 5))" "$result_dir/resources.csv" &
++        run_warmup http://127.0.0.1:5005 "$result_dir/warmup.log"
++
++        ramp="$(ramp_seconds)"
++        sample_host "$result_dir/host.csv" &
++        HOST_PID=$!
++        collect_k8s_metrics "$((DURATION_SECS + ramp + 5))" "$result_dir/resources.csv" &
+         METRICS_PID=$!
+-        "$LOCUST_BIN" -f "$LOCUSTFILE" --headless -u "$USERS" -r "$SPAWN_RATE" -t "$DURATION" -H http://127.0.0.1:5005 --csv="$result_dir/results" --csv-full-history
++        (sleep "$ramp"; capture_cpu_stat_k8s start "$result_dir/cpu_stat.csv") &
++        STAT_PID=$!
++        run_measured_locust http://127.0.0.1:5005 "$result_dir"
++        capture_cpu_stat_k8s end "$result_dir/cpu_stat.csv"
++        wait "$STAT_PID" 2>/dev/null || true
+         wait "$METRICS_PID" || true
+-        METRICS_PID=""
++        kill "$HOST_PID" 2>/dev/null || true
++        wait "$HOST_PID" 2>/dev/null || true
++        METRICS_PID=""; HOST_PID=""; STAT_PID=""
+         stop_port_forward
+         delete_cluster
+     done
+ done
+ 
+-"$ANALYSIS_PYTHON" "$LAB_DIR/tests/generate_graphs.py" "$EXPERIMENT_DIR"
++if [ "$SKIP_ANALYSIS" != "1" ]; then
++    "$ANALYSIS_PYTHON" "$LAB_DIR/tests/generate_graphs.py" "$EXPERIMENT_DIR"
++fi
+ echo "Cenário 5 concluído em $EXPERIMENT_DIR"
+diff --git a/scenario_5/service_a/app.py b/scenario_5/service_a/app.py
+index 1694de9..d018ec8 100644
+--- a/scenario_5/service_a/app.py
++++ b/scenario_5/service_a/app.py
+@@ -28,6 +28,9 @@ JWT_PUBLIC_KEY_PATH = os.getenv(
+ JWT_ISSUER = "zero-trust-lab"
+ JWT_SUBJECT = "checkout_service"
+ JWT_KEY_ID = "zt-lab-rs256-2026"
++# C5a (Kubernetes sem malha) roda com SIGN_JWT=false: nenhuma proteção na chamada interna,
++# como o C1. Em C5b o Checkout assina o token e o Envoy do Inventory o valida.
++SIGN_JWT = os.getenv("SIGN_JWT", "true").lower() == "true"
+ REQUEST_TIMEOUT = (1.0, 3.0)
+ 
+ _session_lock = threading.Lock()
+@@ -126,7 +129,7 @@ def checkout():
+         "item_id": data.get("item_id", "SKU-999"),
+         "quantity": data.get("quantity", 1),
+     }
+-    headers = {"Authorization": f"Bearer {generate_internal_token()}"}
++    headers = {"Authorization": f"Bearer {generate_internal_token()}"} if SIGN_JWT else None
+ 
+     try:
+         response = get_session().post(
+diff --git a/setup.sh b/setup.sh
+index 1061ab3..3b1bba3 100755
+--- a/setup.sh
++++ b/setup.sh
+@@ -2,12 +2,13 @@
+ set -Eeuo pipefail
+ 
+ LAB_DIR="$(cd "$(dirname "$0")" && pwd)"
+-python3 -m venv "$LAB_DIR/venv"
++python3 -m venv --clear "$LAB_DIR/venv"
+ "$LAB_DIR/venv/bin/python" -m pip install --disable-pip-version-check -r "$LAB_DIR/tests/requirements.txt"
+ 
+ if [ ! -f "$LAB_DIR/certs/ca.crt" ]; then
+     bash "$LAB_DIR/certs/generate_certs.sh"
+ fi
++bash "$LAB_DIR/certs/generate_jwt_keys.sh"
+ 
+ echo "Ambiente Python criado em $LAB_DIR/venv"
+ echo "Para o Cenário 5, execute também: bash $LAB_DIR/scenario_5/install_tools.sh"
+diff --git a/tests/generate_graphs.py b/tests/generate_graphs.py
+index 469d982..69712d4 100644
+--- a/tests/generate_graphs.py
++++ b/tests/generate_graphs.py
+@@ -5,16 +5,27 @@ from pathlib import Path
+ 
+ import matplotlib.pyplot as plt
+ import pandas as pd
++from scipy.stats import mannwhitneyu
+ 
+ SCENARIO_LABELS = {
+-    "scenario_1": "C1 — Baseline HTTP",
+-    "scenario_2": "C2 — HTTP + JWT",
+-    "scenario_3": "C3 — mTLS interno",
+-    "scenario_4": "C4 — mTLS interno + JWT",
+-    "scenario_5_k8s_baseline": "C5a — Kubernetes sem mesh",
++    "scenario_1": "C1 — HTTP sem proteção",
++    "scenario_2": "C2 — HTTP + JWT RS256",
++    "scenario_3": "C3 — mTLS na aplicação",
++    "scenario_4": "C4 — mTLS + JWT na aplicação",
++    "scenario_5_k8s_baseline": "C5a — Kubernetes sem malha",
+     "scenario_5_mesh": "C5b — Kubernetes + Istio",
+ }
+ 
++# Pares comparados: dentro de cada plataforma e, para caracterizar a plataforma, C1 × C5a.
++COMPARISONS = [
++    ("scenario_1", "scenario_2"),
++    ("scenario_1", "scenario_3"),
++    ("scenario_1", "scenario_4"),
++    ("scenario_5_k8s_baseline", "scenario_5_mesh"),
++    ("scenario_1", "scenario_5_k8s_baseline"),
++]
++METRICS = ["throughput_rps", "latency_mean_ms", "latency_p50_ms", "latency_p95_ms"]
++
+ 
+ def newest_experiment(runs_dir):
+     candidates = sorted(path for path in runs_dir.glob("experiment_*") if path.is_dir())
+@@ -43,6 +54,7 @@ def load_runs(experiment_dir):
+                 "latency_mean_ms": float(row["Average Response Time"]),
+                 "latency_p50_ms": float(row["50%"]),
+                 "latency_p95_ms": float(row["95%"]),
++                "latency_p99_ms": float(row["99%"]),
+             }
+         )
+     if not rows:
+@@ -50,42 +62,134 @@ def load_runs(experiment_dir):
+     return pd.DataFrame(rows)
+ 
+ 
++def q1(series):
++    return series.quantile(0.25)
++
++
++def q3(series):
++    return series.quantile(0.75)
++
++
+ def summarize_runs(runs):
+-    numeric = [
+-        "requests",
+-        "failures",
+-        "throughput_rps",
+-        "latency_mean_ms",
+-        "latency_p50_ms",
+-        "latency_p95_ms",
+-    ]
+-    summary = runs.groupby(["scenario", "label"])[numeric].agg(["count", "mean", "std"])
++    numeric = ["requests", "failures", *METRICS, "latency_p99_ms"]
++    # std do pandas é amostral (n − 1).
++    summary = runs.groupby(["scenario", "label"])[numeric].agg(
++        ["count", "mean", "std", "median", q1, q3, "min", "max"]
++    )
+     summary.columns = ["_".join(column) for column in summary.columns]
+     return summary.reset_index()
+ 
+ 
++def compare_scenarios(runs):
++    rows = []
++    for reference, target in COMPARISONS:
++        ref = runs[runs["scenario"] == reference]
++        tgt = runs[runs["scenario"] == target]
++        if ref.empty or tgt.empty:
++            continue
++        for metric in METRICS:
++            ref_median = ref[metric].median()
++            tgt_median = tgt[metric].median()
++            test = mannwhitneyu(tgt[metric], ref[metric], alternative="two-sided")
++            rows.append(
++                {
++                    "reference": reference,
++                    "target": target,
++                    "metric": metric,
++                    "n_reference": len(ref),
++                    "n_target": len(tgt),
++                    "median_reference": ref_median,
++                    "median_target": tgt_median,
++                    "median_diff_percent": 100 * (tgt_median / ref_median - 1),
++                    "mean_diff_percent": 100 * (tgt[metric].mean() / ref[metric].mean() - 1),
++                    "mann_whitney_u": test.statistic,
++                    "p_value": test.pvalue,
++                }
++            )
++    return pd.DataFrame(rows)
++
++
++def container_role(container):
++    name = container.lower()
++    service = "checkout" if ("service_a" in name or "service-a" in name) else "inventory"
++    component = "sidecar" if "istio-proxy" in name else "app"
++    return f"{service}_{component}"
++
++
++def summarize_cpu_stat(experiment_dir, runs):
++    """CPU exata por contêiner na janela medida, a partir dos contadores do cgroup v2."""
++    rows = []
++    requests = runs.set_index(["round", "scenario"])["requests"]
++    for stat_path in sorted(experiment_dir.glob("round_*/*/cpu_stat.csv")):
++        frame = pd.read_csv(stat_path)
++        round_name, scenario = stat_path.parents[1].name, stat_path.parent.name
++        pivot = frame.pivot_table(index=["container", "key"], columns="phase", values="value", aggfunc="first")
++        if not {"start", "end"} <= set(pivot.columns):
++            continue
++        delta = (pivot["end"] - pivot["start"]).unstack("key")
++        n_requests = requests.get((round_name, scenario))
++        for container, values in delta.iterrows():
++            usage_ms = values.get("usage_usec", float("nan")) / 1000
++            periods = values.get("nr_periods", 0)
++            rows.append(
++                {
++                    "round": round_name,
++                    "scenario": scenario,
++                    "container": container,
++                    "role": container_role(container),
++                    "cpu_ms": usage_ms,
++                    "cpu_ms_per_request": usage_ms / n_requests if n_requests else float("nan"),
++                    "throttled_periods_percent": 100 * values.get("nr_throttled", 0) / periods if periods else 0.0,
++                    "throttled_ms": values.get("throttled_usec", 0) / 1000,
++                }
++            )
++    return pd.DataFrame(rows)
++
++
++def summarize_host(experiment_dir):
++    rows = []
++    for host_path in sorted(experiment_dir.glob("round_*/*/host.csv")):
++        frame = pd.read_csv(host_path)
++        if frame.empty:
++            continue
++        rows.append(
++            {
++                "round": host_path.parents[1].name,
++                "scenario": host_path.parent.name,
++                "host_cpu_busy_mean": frame["cpu_busy_percent"].mean(),
++                "host_cpu_busy_max": frame["cpu_busy_percent"].max(),
++                "cpu_mhz_mean": frame["cpu_mhz_mean"].mean(),
++                "temp_max_c": frame["temp_max_c"].max(),
++            }
++        )
++    return pd.DataFrame(rows)
++
++
++def locust_warnings(experiment_dir):
++    rows = []
++    for log_path in sorted(experiment_dir.glob("round_*/*/locust.log")):
++        text = log_path.read_text(errors="replace")
++        rows.append(
++            {
++                "round": log_path.parents[1].name,
++                "scenario": log_path.parent.name,
++                "cpu_warning": "CPU usage above 90%" in text,
++            }
++        )
++    return pd.DataFrame(rows)
++
++
+ def plot_distributions(runs, output_dir):
+     order = [scenario for scenario in SCENARIO_LABELS if scenario in set(runs["scenario"])]
+-    labels = [SCENARIO_LABELS[scenario] for scenario in order]
+-    throughput = [
+-        runs.loc[runs["scenario"] == scenario, "throughput_rps"].tolist()
+-        for scenario in order
+-    ]
+-    latency = [
+-        runs.loc[runs["scenario"] == scenario, "latency_p95_ms"].tolist()
+-        for scenario in order
+-    ]
+-
+-    figure, axes = plt.subplots(1, 2, figsize=(15, 6))
+-    axes[0].boxplot(throughput, tick_labels=labels, showmeans=True)
+-    axes[0].set_title("Distribuição da vazão entre repetições")
+-    axes[0].set_ylabel("Requisições por segundo")
+-    axes[1].boxplot(latency, tick_labels=labels, showmeans=True)
+-    axes[1].set_title("Distribuição da latência P95 entre repetições")
+-    axes[1].set_ylabel("Milissegundos")
+-    for axis in axes:
+-        axis.grid(axis="y", alpha=0.3)
+-        axis.tick_params(axis="x", rotation=25)
++    labels = [SCENARIO_LABELS[scenario].split(" — ")[0] for scenario in order]
++    figure, axes = plt.subplots(1, 2, figsize=(12, 5))
++    for axis, metric, ylabel in (
++        (axes[0], "throughput_rps", "Vazão (req/s)"),
++        (axes[1], "latency_mean_ms", "Latência média (ms)"),
++    ):
++        data = [runs.loc[runs["scenario"] == scenario, metric].tolist() for scenario in order]
++        axis.boxplot(data, tick_labels=labels, showmeans=True)
++        axis.set_ylabel(ylabel)
+     figure.tight_layout()
+     figure.savefig(output_dir / "performance_distributions.png", dpi=160)
+     plt.close(figure)
+@@ -100,28 +204,21 @@ def summarize_resources(experiment_dir):
+             frame["cpu_numeric"] = pd.to_numeric(
+                 frame["cpu_percent"].astype(str).str.rstrip("%"), errors="coerce"
+             )
+-            rows.append(
+-                {
+-                    "round": resource_path.parents[1].name,
+-                    "scenario": scenario,
+-                    "cpu_mean": frame["cpu_numeric"].mean(),
+-                    "cpu_max": frame["cpu_numeric"].max(),
+-                    "unit": "percent",
+-                }
+-            )
++            unit = "percent"
+         elif "cpu_millicores" in frame.columns:
+-            frame["cpu_numeric"] = pd.to_numeric(
+-                frame["cpu_millicores"], errors="coerce"
+-            )
+-            rows.append(
+-                {
+-                    "round": resource_path.parents[1].name,
+-                    "scenario": scenario,
+-                    "cpu_mean": frame["cpu_numeric"].mean(),
+-                    "cpu_max": frame["cpu_numeric"].max(),
+-                    "unit": "millicores",
+-                }
+-            )
++            frame["cpu_numeric"] = pd.to_numeric(frame["cpu_millicores"], errors="coerce")
++            unit = "millicores"
++        else:
++            continue
++        rows.append(
++            {
++                "round": resource_path.parents[1].name,
++                "scenario": scenario,
++                "cpu_mean": frame["cpu_numeric"].mean(),
++                "cpu_max": frame["cpu_numeric"].max(),
++                "unit": unit,
++            }
++        )
+     return pd.DataFrame(rows)
+ 
+ 
+@@ -143,11 +240,25 @@ def main():
+     runs = load_runs(experiment_dir)
+     runs.to_csv(output_dir / "runs.csv", index=False)
+     summarize_runs(runs).to_csv(output_dir / "summary_by_scenario.csv", index=False)
++    comparisons = compare_scenarios(runs)
++    if not comparisons.empty:
++        comparisons.to_csv(output_dir / "comparisons.csv", index=False)
+     plot_distributions(runs, output_dir)
+ 
+-    resources = summarize_resources(experiment_dir)
+-    if not resources.empty:
+-        resources.to_csv(output_dir / "resource_summary_by_run.csv", index=False)
++    for name, frame in (
++        ("resource_summary_by_run.csv", summarize_resources(experiment_dir)),
++        ("cpu_stat_by_run.csv", summarize_cpu_stat(experiment_dir, runs)),
++        ("host_by_run.csv", summarize_host(experiment_dir)),
++        ("locust_warnings.csv", locust_warnings(experiment_dir)),
++    ):
++        if not frame.empty:
++            frame.to_csv(output_dir / name, index=False)
++
++    cpu = summarize_cpu_stat(experiment_dir, runs)
++    if not cpu.empty:
++        cpu.groupby(["scenario", "role"])[["cpu_ms_per_request", "throttled_periods_percent"]].median().to_csv(
++            output_dir / "cpu_per_request_median.csv"
++        )
+ 
+     print(f"Análise gerada em {output_dir}")
+ 
+diff --git a/tests/requirements.txt b/tests/requirements.txt
+index 9d512e5..3ec5456 100644
+--- a/tests/requirements.txt
++++ b/tests/requirements.txt
+@@ -6,3 +6,4 @@ pandas==3.0.3
+ PyJWT==2.13.0
+ pytest==9.0.3
+ requests==2.34.2
++scipy==1.16.2
+diff --git a/tests/test_contracts.py b/tests/test_contracts.py
+index fea1dc6..a94b48f 100644
+--- a/tests/test_contracts.py
++++ b/tests/test_contracts.py
+@@ -7,8 +7,31 @@ import jwt
+ import pytest
+ import requests
+ 
++import tempfile
++
++from cryptography.hazmat.primitives import serialization
++from cryptography.hazmat.primitives.asymmetric import rsa
++
+ LAB_DIR = Path(__file__).resolve().parents[1]
+-os.environ["JWT_SECRET"] = "test-secret-with-at-least-thirty-two-bytes"
++
++# Par RSA temporário, no mesmo formato do usado nos cenários (RS256).
++_KEY_DIR = Path(tempfile.mkdtemp(prefix="zt-lab-test-keys-"))
++TEST_PRIVATE_KEY = rsa.generate_private_key(public_exponent=65537, key_size=2048)
++(_KEY_DIR / "jwt_private.pem").write_bytes(
++    TEST_PRIVATE_KEY.private_bytes(
++        encoding=serialization.Encoding.PEM,
++        format=serialization.PrivateFormat.PKCS8,
++        encryption_algorithm=serialization.NoEncryption(),
++    )
++)
++(_KEY_DIR / "jwt_public.pem").write_bytes(
++    TEST_PRIVATE_KEY.public_key().public_bytes(
++        encoding=serialization.Encoding.PEM,
++        format=serialization.PublicFormat.SubjectPublicKeyInfo,
++    )
++)
++os.environ["JWT_PRIVATE_KEY_PATH"] = str(_KEY_DIR / "jwt_private.pem")
++os.environ["JWT_PUBLIC_KEY_PATH"] = str(_KEY_DIR / "jwt_public.pem")
+ 
+ 
+ def load_module(relative_path, module_name):
+@@ -92,8 +115,8 @@ def test_expired_jwt_is_always_rejected(scenario):
+             "iat": now - datetime.timedelta(minutes=2),
+             "exp": now - datetime.timedelta(minutes=1),
+         },
+-        os.environ["JWT_SECRET"],
+-        algorithm="HS256",
++        TEST_PRIVATE_KEY,
++        algorithm="RS256",
+     )
+ 
+     response = module.app.test_client().post(
+@@ -119,8 +142,8 @@ def test_inventory_rejects_invalid_quantity(scenario):
+                 "iat": now,
+                 "exp": now + datetime.timedelta(minutes=1),
+             },
+-            os.environ["JWT_SECRET"],
+-            algorithm="HS256",
++            TEST_PRIVATE_KEY,
++            algorithm="RS256",
+         )
+         headers["Authorization"] = f"Bearer {token}"
+ 
+@@ -167,3 +190,60 @@ def test_scenario_5_caches_parsed_rsa_key_and_publishes_jwks(tmp_path, monkeypat
+     token = module.generate_internal_token()
+     assert jwt.get_unverified_header(token)["alg"] == "RS256"
+     assert module.get_jwks()["keys"][0]["alg"] == "RS256"
++
++
++@pytest.mark.parametrize("scenario", ["scenario_2", "scenario_4"])
++def test_token_signed_with_other_key_is_rejected(scenario):
++    module = load_module(f"{scenario}/service_b/app.py", f"{scenario}_service_b_other_key")
++    other_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
++    now = datetime.datetime.now(datetime.timezone.utc)
++    token = jwt.encode(
++        {"iss": "zero-trust-lab", "sub": "checkout_service", "iat": now,
++         "exp": now + datetime.timedelta(minutes=1)},
++        other_key,
++        algorithm="RS256",
++    )
++
++    response = module.app.test_client().post(
++        "/internal/reserve-stock",
++        headers={"Authorization": f"Bearer {token}"},
++        json={"item_id": "SKU-999", "quantity": 1},
++    )
++
++    assert response.status_code == 401
++
++
++@pytest.mark.parametrize("scenario", ["scenario_2", "scenario_4"])
++def test_checkout_signs_rs256_token_accepted_by_inventory(scenario):
++    checkout = load_module(f"{scenario}/service_a/app.py", f"{scenario}_service_a_rs256")
++    inventory = load_module(f"{scenario}/service_b/app.py", f"{scenario}_service_b_rs256")
++    token = checkout.generate_internal_token()
++    assert jwt.get_unverified_header(token)["alg"] == "RS256"
++
++    response = inventory.app.test_client().post(
++        "/internal/reserve-stock",
++        headers={"Authorization": f"Bearer {token}"},
++        json={"item_id": "SKU-999", "quantity": 1},
++    )
++
++    assert response.status_code == 200
++    assert response.get_json()["status"] == "reserved"
++
++
++def test_scenario_5_baseline_sends_no_token(monkeypatch):
++    monkeypatch.setenv("SIGN_JWT", "false")
++    module = load_module("scenario_5/service_a/app.py", "scenario_5_service_a_no_jwt")
++    captured = {}
++
++    class CapturingSession(FakeSession):
++        def post(self, *args, **kwargs):
++            captured["headers"] = kwargs.get("headers")
++            return super().post(*args, **kwargs)
++
++    module._http_session = CapturingSession(FakeResponse(body={"status": "reserved"}))
++    response = module.app.test_client().post(
++        "/api/v1/checkout", json={"item_id": "SKU-999", "quantity": 1}
++    )
++
++    assert response.status_code == 200
++    assert not captured["headers"]
+diff --git a/validate.sh b/validate.sh
+index a0b4858..61dfb15 100755
+--- a/validate.sh
++++ b/validate.sh
+@@ -2,7 +2,7 @@
+ set -Eeuo pipefail
+ 
+ LAB_DIR="$(cd "$(dirname "$0")" && pwd)"
+-export JWT_SECRET="validation-only-secret-with-at-least-32-bytes"
++
+ 
+ while IFS= read -r script_path; do
+     bash -n "$script_path"

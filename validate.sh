@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 LAB_DIR="$(cd "$(dirname "$0")" && pwd)"
-export JWT_SECRET="validation-only-secret-with-at-least-32-bytes"
+
 
 while IFS= read -r script_path; do
     bash -n "$script_path"

@@ -2,11 +2,15 @@ services:
   service_a:
     build: ./service_a
     init: true
+    cpus: "${CPU_LIMIT:-1.0}"
+    mem_limit: "${MEM_LIMIT:-256m}"
     ports:
       - "5000:5000"
     environment:
       INVENTORY_URL: http://service_b:5000/internal/reserve-stock
-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
+      JWT_PRIVATE_KEY_PATH: /keys/jwt_private.pem
+    volumes:
+      - ../certs/jwt_private.pem:/keys/jwt_private.pem:ro
     depends_on:
       service_b:
         condition: service_healthy
@@ -19,8 +23,12 @@ services:
   service_b:
     build: ./service_b
     init: true
+    cpus: "${CPU_LIMIT:-1.0}"
+    mem_limit: "${MEM_LIMIT:-256m}"
     environment:
-      JWT_SECRET: "${JWT_SECRET:?defina JWT_SECRET antes de iniciar}"
+      JWT_PUBLIC_KEY_PATH: /keys/jwt_public.pem
+    volumes:
+      - ../certs/jwt_public.pem:/keys/jwt_public.pem:ro
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=2)"]
       interval: 2s

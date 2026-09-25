@@ -36,3 +36,7 @@ scenario_5/port_forward_manual.log
 Thumbs.db
 .vscode/
 .idea/
+
+# Dados publicados do TCC (resultados brutos e consolidados, sem segredos)
+!dados/
+!dados/**

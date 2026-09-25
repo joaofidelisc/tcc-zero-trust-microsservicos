@@ -27,13 +27,15 @@ spec:
       serviceAccountName: service-a
       containers:
         - name: service-a
-          image: zero-trust-lab-service-a:corrected-v1
+          image: zero-trust-lab-service-a:corrected-v2
           imagePullPolicy: Never
           ports:
             - containerPort: 5000
           env:
             - name: INVENTORY_URL
               value: http://service-b:5000/internal/reserve-stock
+            - name: SIGN_JWT
+              value: "__SIGN_JWT__"
           volumeMounts:
             - name: jwt-signing-key
               mountPath: /var/run/secrets/zt-jwt
@@ -68,11 +70,13 @@ kind: Service
 metadata:
   name: service-a
 spec:
+  type: NodePort
   selector:
     app: service-a
   ports:
     - port: 5000
       targetPort: 5000
+      nodePort: 30500
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -93,7 +97,7 @@ spec:
       serviceAccountName: service-b
       containers:
         - name: service-b
-          image: zero-trust-lab-service-b:corrected-v1
+          image: zero-trust-lab-service-b:corrected-v2
           imagePullPolicy: Never
           ports:
             - containerPort: 5000

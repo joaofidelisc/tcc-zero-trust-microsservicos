@@ -7,6 +7,7 @@ import time
 
 import jwt
 import requests
+from cryptography.hazmat.primitives.serialization import load_pem_private_key
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
@@ -14,16 +15,16 @@ app = Flask(__name__)
 INVENTORY_URL = os.getenv(
     "INVENTORY_URL", "https://service_b:5000/internal/reserve-stock"
 )
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_PRIVATE_KEY_PATH = os.getenv("JWT_PRIVATE_KEY_PATH", "/keys/jwt_private.pem")
+JWT_KEY_ID = "zt-lab-rs256-2026"
 JWT_ISSUER = "zero-trust-lab"
 JWT_SUBJECT = "checkout_service"
 REQUEST_TIMEOUT = (1.0, 3.0)
 
-if not JWT_SECRET:
-    raise RuntimeError("JWT_SECRET deve ser definido")
-
 _session_lock = threading.Lock()
 _http_session = None
+_key_lock = threading.Lock()
+_private_key = None
 
 
 def get_session():
@@ -42,6 +43,16 @@ def get_session():
     return _http_session
 
 
+def get_private_key():
+    global _private_key
+    if _private_key is None:
+        with _key_lock:
+            if _private_key is None:
+                with open(JWT_PRIVATE_KEY_PATH, "rb") as key_file:
+                    _private_key = load_pem_private_key(key_file.read(), password=None)
+    return _private_key
+
+
 def generate_internal_token():
     now = datetime.datetime.now(datetime.timezone.utc)
     return jwt.encode(
@@ -51,8 +62,9 @@ def generate_internal_token():
             "iat": now,
             "exp": now + datetime.timedelta(seconds=30),
         },
-        JWT_SECRET,
-        algorithm="HS256",
+        get_private_key(),
+        algorithm="RS256",
+        headers={"kid": JWT_KEY_ID},
     )
 
 

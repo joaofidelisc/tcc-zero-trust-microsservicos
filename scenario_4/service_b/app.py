@@ -1,19 +1,31 @@
 """Cenário 4: Inventory Service protegido por mTLS e JWT."""
 
 import os
+import threading
 from functools import wraps
 
 import jwt
+from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from flask import Flask, jsonify, request
 
 app = Flask(__name__)
 
-JWT_SECRET = os.getenv("JWT_SECRET")
+JWT_PUBLIC_KEY_PATH = os.getenv("JWT_PUBLIC_KEY_PATH", "/keys/jwt_public.pem")
 JWT_ISSUER = "zero-trust-lab"
 JWT_SUBJECT = "checkout_service"
 
-if not JWT_SECRET:
-    raise RuntimeError("JWT_SECRET deve ser definido")
+_key_lock = threading.Lock()
+_public_key = None
+
+
+def get_public_key():
+    global _public_key
+    if _public_key is None:
+        with _key_lock:
+            if _public_key is None:
+                with open(JWT_PUBLIC_KEY_PATH, "rb") as key_file:
+                    _public_key = load_pem_public_key(key_file.read())
+    return _public_key
 
 
 def require_jwt(function):
@@ -27,8 +39,8 @@ def require_jwt(function):
         try:
             payload = jwt.decode(
                 token,
-                JWT_SECRET,
-                algorithms=["HS256"],
+                get_public_key(),
+                algorithms=["RS256"],
                 issuer=JWT_ISSUER,
                 options={"require": ["exp", "iat", "iss", "sub"]},
             )

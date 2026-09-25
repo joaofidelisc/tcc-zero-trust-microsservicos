@@ -7,8 +7,8 @@ RUNTIME_DIR="$SCENARIO_DIR/runtime-secrets"
 source "$SCENARIO_DIR/versions.env"
 
 CLUSTER_NAME="${CLUSTER_NAME:-zt-lab-corrected}"
-SERVICE_A_IMAGE="zero-trust-lab-service-a:corrected-v1"
-SERVICE_B_IMAGE="zero-trust-lab-service-b:corrected-v1"
+SERVICE_A_IMAGE="zero-trust-lab-service-a:corrected-v2"
+SERVICE_B_IMAGE="zero-trust-lab-service-b:corrected-v2"
 METRICS_SERVER_URL="https://github.com/kubernetes-sigs/metrics-server/releases/download/$METRICS_SERVER_VERSION/components.yaml"
 export PATH="$BIN_DIR:$PATH"
 
@@ -61,13 +61,13 @@ build_images() {
 }
 
 generate_signing_key() {
+    # Mesmo par RSA de 3.072 bits usado em C2 e C4 (certs/generate_jwt_keys.sh).
+    bash "$LAB_DIR/certs/generate_jwt_keys.sh"
     mkdir -p "$RUNTIME_DIR"
     chmod 700 "$RUNTIME_DIR"
-    if [ ! -f "$RUNTIME_DIR/jwt-private.pem" ]; then
-        openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:3072 -out "$RUNTIME_DIR/jwt-private.pem"
-        chmod 600 "$RUNTIME_DIR/jwt-private.pem"
-    fi
-    openssl pkey -in "$RUNTIME_DIR/jwt-private.pem" -pubout -out "$RUNTIME_DIR/jwt-public.pem"
+    cp "$LAB_DIR/certs/jwt_private.pem" "$RUNTIME_DIR/jwt-private.pem"
+    cp "$LAB_DIR/certs/jwt_public.pem" "$RUNTIME_DIR/jwt-public.pem"
+    chmod 600 "$RUNTIME_DIR/jwt-private.pem"
     chmod 644 "$RUNTIME_DIR/jwt-public.pem"
 }
 
@@ -86,7 +86,7 @@ create_cluster() {
         echo "O cluster $CLUSTER_NAME já existe. Encerre-o antes de continuar." >&2
         return 1
     fi
-    kind create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --wait 180s
+    kind create cluster --name "$CLUSTER_NAME" --image "$KIND_NODE_IMAGE" --config "$SCENARIO_DIR/kind-config.yaml" --wait 180s
     kind load docker-image "$SERVICE_A_IMAGE" "$SERVICE_B_IMAGE" --name "$CLUSTER_NAME"
 }
 
@@ -118,8 +118,12 @@ deploy_apps() {
     if [ "$mode" = "baseline" ]; then
         kubectl label namespace default istio-injection=disabled --overwrite
     fi
+    local sign_jwt="false"
+    if [ "$mode" = "mesh" ]; then
+        sign_jwt="true"
+    fi
     create_jwt_secret
-    kubectl apply -f "$SCENARIO_DIR/k8s-app.yaml"
+    sed "s/__SIGN_JWT__/$sign_jwt/" "$SCENARIO_DIR/k8s-app.yaml" | kubectl apply -f -
     kubectl rollout status deployment/service-a --timeout=180s
     kubectl rollout status deployment/service-b --timeout=180s
     if [ "$mode" = "mesh" ]; then
@@ -130,16 +134,22 @@ deploy_apps() {
 }
 
 start_port_forward() {
+    # Mantido o nome por compatibilidade. Por padrão o acesso usa a NodePort mapeada
+    # pelo Kind (ACCESS_MODE=nodeport); ACCESS_MODE=portforward reproduz o desenho antigo.
     local log_file="$1"
-    kubectl port-forward service/service-a 5005:5000 >"$log_file" 2>&1 &
-    PF_PID=$!
-    for attempt in $(seq 1 30); do
+    if [ "${ACCESS_MODE:-nodeport}" = "portforward" ]; then
+        kubectl port-forward service/service-a 5005:5000 >"$log_file" 2>&1 &
+        PF_PID=$!
+    else
+        printf 'acesso via NodePort 30500 mapeada em 127.0.0.1:5005\n' >"$log_file"
+    fi
+    for attempt in $(seq 1 60); do
         if curl -fsS --max-time 2 http://127.0.0.1:5005/health >/dev/null 2>&1; then
             return 0
         fi
         sleep 1
     done
-    echo "Port-forward não ficou pronto; consulte $log_file." >&2
+    echo "O Checkout não respondeu em 127.0.0.1:5005; consulte $log_file." >&2
     return 1
 }
 
@@ -177,7 +187,17 @@ collect_k8s_metrics() {
 }
 
 validate_checkout() {
-    curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"'
+    # Logo após a criação do cluster, o DNS interno e as regras de rede do service-b podem
+    # ainda não estar ativos; tenta por até ~60 s antes de considerar falha.
+    kubectl rollout status deployment/coredns -n kube-system --timeout=120s >/dev/null
+    for attempt in $(seq 1 30); do
+        if curl -fsS --max-time 5 -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout 2>/dev/null | python3 -c 'import json,sys; body=json.load(sys.stdin); assert body.get("status")=="success"; assert body.get("inventory_status",{}).get("status")=="reserved"' 2>/dev/null; then
+            return 0
+        fi
+        sleep 2
+    done
+    echo "O Checkout não concluiu uma compra válida em 127.0.0.1:5005." >&2
+    return 1
 }
 
 validate_mesh_rejection_without_jwt() {

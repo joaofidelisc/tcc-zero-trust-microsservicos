@@ -28,6 +28,9 @@ JWT_PUBLIC_KEY_PATH = os.getenv(
 JWT_ISSUER = "zero-trust-lab"
 JWT_SUBJECT = "checkout_service"
 JWT_KEY_ID = "zt-lab-rs256-2026"
+# C5a (Kubernetes sem malha) roda com SIGN_JWT=false: nenhuma proteção na chamada interna,
+# como o C1. Em C5b o Checkout assina o token e o Envoy do Inventory o valida.
+SIGN_JWT = os.getenv("SIGN_JWT", "true").lower() == "true"
 REQUEST_TIMEOUT = (1.0, 3.0)
 
 _session_lock = threading.Lock()
@@ -126,7 +129,7 @@ def checkout():
         "item_id": data.get("item_id", "SKU-999"),
         "quantity": data.get("quantity", 1),
     }
-    headers = {"Authorization": f"Bearer {generate_internal_token()}"}
+    headers = {"Authorization": f"Bearer {generate_internal_token()}"} if SIGN_JWT else None
 
     try:
         response = get_session().post(

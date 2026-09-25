@@ -1,0 +1,161 @@
+Chaves JWT RS256 disponíveis em /home/cardozo/Desktop/TCC USP/ProjetodePesquisa/tcc-zero-trust-microsservicos/certs.
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 499B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
+#2 DONE 1.5s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 64B done
+#5 DONE 0.0s
+
+#6 [3/5] COPY requirements.txt .
+#6 CACHED
+
+#7 [4/5] RUN python -m pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+#7 CACHED
+
+#8 [2/5] WORKDIR /app
+#8 CACHED
+
+#9 [5/5] COPY app.py .
+#9 CACHED
+
+#10 exporting to image
+#10 exporting layers done
+#10 writing image sha256:d0862c5c70c6a0e4e7d2f3d31ac31ffe6697ee965c158adadb73afd78e1c35fa done
+#10 naming to docker.io/library/zero-trust-lab-service-a:corrected-v2 done
+#10 DONE 0.0s
+#0 building with "default" instance using docker driver
+
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 499B done
+#1 DONE 0.0s
+
+#2 [internal] load metadata for docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
+#2 DONE 0.0s
+
+#3 [internal] load .dockerignore
+#3 transferring context: 2B done
+#3 DONE 0.0s
+
+#4 [1/5] FROM docker.io/library/python:3.11.9-slim-bookworm@sha256:8fb099199b9f2d70342674bd9dbccd3ed03a258f26bbd1d556822c6dfc60c317
+#4 DONE 0.0s
+
+#5 [internal] load build context
+#5 transferring context: 64B done
+#5 DONE 0.0s
+
+#6 [2/5] WORKDIR /app
+#6 CACHED
+
+#7 [3/5] COPY requirements.txt .
+#7 CACHED
+
+#8 [4/5] RUN python -m pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
+#8 CACHED
+
+#9 [5/5] COPY app.py .
+#9 CACHED
+
+#10 exporting to image
+#10 exporting layers done
+#10 writing image sha256:780b576f7799a5d252d0079f25802bef6ac9b7f741c33ae7b75fe8d5d893139e done
+#10 naming to docker.io/library/zero-trust-lab-service-b:corrected-v2 done
+#10 DONE 0.0s
+==> round_01 scenario_5_mesh
+Creating cluster "zt-lab-corrected" ...
+ • Ensuring node image (kindest/node:v1.35.0) 🖼  ...
+ ✓ Ensuring node image (kindest/node:v1.35.0) 🖼
+ • Preparing nodes 📦   ...
+ ✓ Preparing nodes 📦 
+ • Writing configuration 📜  ...
+ ✓ Writing configuration 📜
+ • Starting control-plane 🕹️  ...
+ ✓ Starting control-plane 🕹️
+ • Installing CNI 🔌  ...
+ ✓ Installing CNI 🔌
+ • Installing StorageClass 💾  ...
+ ✓ Installing StorageClass 💾
+ • Waiting ≤ 3m0s for control-plane = Ready ⏳  ...
+ ✓ Waiting ≤ 3m0s for control-plane = Ready ⏳
+ • Ready after 17s 💚
+Set kubectl context to "kind-zt-lab-corrected"
+You can now use your cluster with:
+
+kubectl cluster-info --context kind-zt-lab-corrected
+
+Not sure what to do next? 😅  Check out https://kind.sigs.k8s.io/docs/user/quick-start/
+Image: "zero-trust-lab-service-a:corrected-v2" with ID "sha256:d0862c5c70c6a0e4e7d2f3d31ac31ffe6697ee965c158adadb73afd78e1c35fa" not yet present on node "zt-lab-corrected-control-plane", loading...
+Image: "zero-trust-lab-service-b:corrected-v2" with ID "sha256:780b576f7799a5d252d0079f25802bef6ac9b7f741c33ae7b75fe8d5d893139e" not yet present on node "zt-lab-corrected-control-plane", loading...
+serviceaccount/metrics-server created
+clusterrole.rbac.authorization.k8s.io/system:aggregated-metrics-reader created
+clusterrole.rbac.authorization.k8s.io/system:metrics-server created
+rolebinding.rbac.authorization.k8s.io/metrics-server-auth-reader created
+clusterrolebinding.rbac.authorization.k8s.io/metrics-server:system:auth-delegator created
+clusterrolebinding.rbac.authorization.k8s.io/system:metrics-server created
+service/metrics-server created
+deployment.apps/metrics-server created
+apiservice.apiregistration.k8s.io/v1beta1.metrics.k8s.io created
+deployment.apps/metrics-server patched
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+Waiting for deployment "metrics-server" rollout to finish: 1 old replicas are pending termination...
+deployment "metrics-server" successfully rolled out
+        |\          
+        | \         
+        |  \        
+        |   \       
+      /||    \      
+     / ||     \     
+    /  ||      \    
+   /   ||       \   
+  /    ||        \  
+ /     ||         \ 
+/______||__________\
+____________________
+  \__       _____/  
+     \_____/        
+
+
+- Processing resources for Istio core.
+✔ Istio core installed ⛵️
+- Processing resources for Istiod.
+- Processing resources for Istiod. Waiting for Deployment/istio-system/istiod
+✔ Istiod installed 🧠
+- Processing resources for Ingress gateways.
+- Processing resources for Ingress gateways. Waiting for Deployment/istio-system/istio-ingressgat...
+✔ Ingress gateways installed 🛬
+- Pruning removed resources
+✔ Installation completenamespace/default labeled
+secret/jwt-signing-key created
+serviceaccount/service-a created
+serviceaccount/service-b created
+deployment.apps/service-a created
+service/service-a created
+deployment.apps/service-b created
+service/service-b created
+Waiting for deployment "service-a" rollout to finish: 0 of 1 updated replicas are available...
+deployment "service-a" successfully rolled out
+deployment "service-b" successfully rolled out
+peerauthentication.security.istio.io/service-b-strict-mtls created
+requestauthentication.security.istio.io/service-b-jwt created
+authorizationpolicy.security.istio.io/service-b-only-service-a created
+pod/service-a-566b9cc9dc-mbdz4 condition met
+pod/service-b-b9d464c6d-52snq condition met
+    1                  POST /api/v1/checkout: HTTP 503: upstream connect error or disconnect/reset before headers. reset reason: connection termination
+    ------------------|---------------------------------------------------------------------------------------------------------------------------------------------
+    
+Deleting cluster "zt-lab-corrected" ...
+Deleted nodes: ["zt-lab-corrected-control-plane"]
+Cenário 5 concluído em /home/cardozo/Desktop/TCC USP/ProjetodePesquisa/tcc-zero-trust-microsservicos/tests/runs/experiment_20260924_013158

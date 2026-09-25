@@ -1,164 +1,94 @@
-# Laboratório corrigido — TCC Zero Trust
+# Custo de desempenho de JWT, mTLS e Istio na comunicação entre microsserviços
 
-Esta pasta é uma versão independente e corrigida do laboratório. A pasta original
-lab não é usada nem modificada por estes scripts.
+Laboratório do Trabalho de Conclusão de Curso do MBA em Engenharia de Software (USP/Esalq, 2026). Ele mede o custo de desempenho de três controles de segurança na chamada entre dois microsserviços:
+- autenticação por JSON Web Token (JWT);
+- TLS mútuo (mTLS);
+- *service mesh* Istio/Envoy.
 
-## O que foi corrigido
+As métricas são vazão (*throughput*), latência, CPU e memória.
 
-| Problema anterior | Correção nesta pasta |
+A aplicação simula a finalização de um pedido em um comércio eletrônico. O serviço **Checkout** recebe a compra e chama o serviço **Inventory**, que confirma a reserva do item.
+
+## Configurações avaliadas
+
+| Configuração | Plataforma | Proteção da chamada Checkout → Inventory | Pasta |
+|---|---|---|---|
+| C1 | Docker | Nenhuma (HTTP) | `scenario_1/` |
+| C2 | Docker | JWT RS256 assinado pelo Checkout e validado pelo Inventory | `scenario_2/` |
+| C3 | Docker | mTLS entre as aplicações | `scenario_3/` |
+| C4 | Docker | mTLS e JWT RS256 entre as aplicações | `scenario_4/` |
+| C5a | Kubernetes (Kind) | Nenhuma (HTTP) | `scenario_5/` |
+| C5b | Kubernetes + Istio | mTLS estrito e validação do JWT no Envoy; assinatura no Checkout | `scenario_5/` |
+
+**Condições comuns às seis configurações:**
+- **Recursos:** as aplicações têm o mesmo limite nas duas plataformas, 1 CPU e 256 MiB por contêiner.
+- **Chaves:** os tokens usam o mesmo par RSA de 3.072 bits.
+- **Acesso:** o gerador de carga acessa o Checkout por uma porta publicada, no Docker, ou por uma NodePort, no Kubernetes.
+
+## Requisitos
+
+- Linux com Docker Engine e Docker Compose v2
+- Python 3, OpenSSL e curl
+- Para C5a e C5b: acesso à internet na primeira execução. O script `scenario_5/install_tools.sh` baixa Kind, kubectl e istioctl nas versões fixadas em `scenario_5/versions.env`.
+
+## Como executar
+
+```bash
+bash setup.sh                      # ambiente virtual, dependências, certificados e chaves JWT
+bash scenario_5/install_tools.sh   # Kind, kubectl e istioctl (uma vez)
+bash validate.sh                   # verificação dos roteiros e testes automatizados
+
+# experimento completo usado no TCC (≈ 3,5 h; deixe a máquina ociosa)
+REPETITIONS=10 DURATION=120s USERS=200 SPAWN_RATE=20 WARMUP_SECONDS=15 bash run_experiment.sh
+```
+
+**O que o `run_experiment.sh` faz em cada rodada:**
+- **Ordem:** executa as seis configurações em ordem sorteada, recriando contêineres e *clusters* a cada execução.
+- **Carga:** faz um aquecimento com carga e descarta a subida dos usuários.
+- **Coleta:** registra, por execução, as estatísticas do Locust, a CPU e o *throttling* de cada contêiner (contadores do cgroup v2), a memória e a CPU, frequência e temperatura do computador.
+- **Registro:** grava as versões, os parâmetros e o *commit* utilizados.
+
+Os resultados ficam em `tests/runs/experiment_DATA_HORA/`.
+
+**Execução isolada:**
+- C1–C4: `bash run_tests.sh`
+- C5a/C5b: `bash scenario_5/run_scenario_5.sh`
+
+## Análise e figuras
+
+```bash
+venv/bin/python tests/generate_graphs.py tests/runs/experiment_DATA_HORA
+venv/bin/python tests/generate_tcc_figures.py tests/runs/experiment_DATA_HORA pasta_de_saida
+```
+
+O primeiro comando gera, em `analysis/`:
+- mediana e intervalo interquartil por configuração;
+- comparações com o teste de Mann-Whitney;
+- CPU por requisição e *throttling* por contêiner;
+- memória e dados do computador.
+
+O segundo gera as figuras e tabelas do TCC.
+
+## Dados do TCC
+
+A pasta `dados/` contém os resultados usados no trabalho:
+
+| Pasta | Conteúdo |
 |---|---|
-| Falhas do Service B podiam virar HTTP 200 no Service A | Todas as chamadas usam timeout, raise_for_status e validação do status de negócio; falhas retornam 502 ou 504 |
-| O Locust contava apenas o status HTTP | A resposta agora só é sucesso quando checkout é success e o estoque está reserved |
-| O cache JWT podia aceitar token expirado e crescer indefinidamente | O cache foi removido; assinatura, expiração, emissor, assunto e claims obrigatórias são verificados em todas as chamadas |
-| O custo do mTLS incluía também TLS entre Locust e Service A | O tráfego externo é HTTP nos quatro cenários Docker; somente A → B usa mTLS nos Cenários 3 e 4 |
-| Locust reutilizava a identidade do Service A | O Locust não usa certificado; somente o Service A possui a chave cliente mTLS |
-| Ambos os containers recebiam todas as chaves privadas | Cada serviço monta apenas sua própria chave e a CA |
-| Cenário 5 usava a ServiceAccount default | Service A e Service B possuem contas distintas e a política exige o principal mTLS do Service A |
-| JWT simétrico era exposto como JWKS no Istio | Cenário 5 usa RS256; a chave privada fica em Secret somente no Service A e o Envoy obtém apenas a chave pública |
-| Docker era comparado diretamente com Kubernetes + Istio | Cenário 5 mede Kubernetes sem mesh e Kubernetes + Istio em clusters novos, com ordem aleatória |
-| Uma única rodada em ordem fixa | Cenários 1–4 usam cinco repetições por padrão e ordem aleatória em cada rodada |
-| Resultados anteriores eram apagados | Cada execução cria tests/runs/experiment_DATA_HORA |
-| Sleeps eram usados como readiness | Compose usa healthchecks; Kubernetes usa readiness probes e rollout status |
-| Cleanup podia deixar processos ou matar kubectl alheio | Traps encerram apenas os PIDs e o cluster zt-lab-corrected deste laboratório |
-| Dependências e imagens eram flutuantes | Python e dependências são fixados; Kind, Kubernetes, Istio e Metrics Server têm versões declaradas |
-| Gráficos tinham data e arquivo histórico hardcoded | O analisador recebe qualquer diretório de experimento e calcula média, desvio e distribuição das repetições |
+| `dados/experimento_final_20260924/` | Experimento final: 10 rodadas × 6 configurações (60 execuções), com dados brutos por execução e análise consolidada em `analysis/`. As notas da execução estão em `NOTAS_EXECUCAO.md` |
+| `dados/ensaio_preliminar_20260907/` | Ensaio preliminar (3 rodadas), feito com um desenho anterior: sem limites de recursos no Docker, JWT HS256 no Docker e acesso ao Kubernetes por `port-forward`. Citado no TCC para justificar o desenho final |
 
-## Preparação
+## Estrutura
 
-Na raiz desta pasta:
+```
+run_experiment.sh        experimento completo (seis configurações intercaladas)
+run_tests.sh             C1–C4 (Docker)
+scenario_1 … scenario_4  aplicações e docker-compose de cada configuração Docker
+scenario_5/              C5a e C5b: manifestos Kubernetes e Istio, configuração do Kind, roteiros
+lib/measure.sh           medições comuns (aquecimento, Locust, cgroup, computador, TLS)
+certs/                   geração de certificados mTLS e chaves JWT (não versionados)
+tests/                   carga (locustfile), testes automatizados, análise e figuras
+dados/                   resultados usados no TCC
+```
 
-    cd "/home/cardozo/Desktop/TCC USP/ProjetodePesquisa/tcc-zero-trust-microsservicos"
-    bash setup.sh
-    bash validate.sh
-
-O setup cria um venv próprio, instala Locust, pytest, pandas e matplotlib, e gera
-os certificados dos Cenários 3 e 4. Ele não reutiliza o venv nem os certificados
-da pasta original.
-
-## Execução oficial dos Cenários 1–4
-
-Com os valores padrão são feitas cinco repetições de 60 segundos. A ordem dos
-quatro cenários é sorteada novamente em cada repetição.
-
-    bash run_tests.sh
-
-Execução curta para conferir o funcionamento:
-
-    REPETITIONS=1 DURATION=15s USERS=10 SPAWN_RATE=5 WARMUP_SECONDS=2 bash run_tests.sh
-
-Parâmetros aceitos:
-
-- REPETITIONS: quantidade de rodadas; padrão 5.
-- DURATION: duração Locust no formato 60s.
-- USERS: usuários simultâneos; padrão 50.
-- SPAWN_RATE: usuários iniciados por segundo; padrão 10.
-- WARMUP_SECONDS: aquecimento antes da medição; padrão 10.
-- COOLDOWN_SECONDS: intervalo entre cenários; padrão 5.
-- EXPERIMENT_ID: nome opcional do diretório da rodada.
-- INCLUDE_SCENARIO_5=1: executa também a comparação Kubernetes × Istio.
-
-## Execução manual de um cenário Docker
-
-O exemplo abaixo usa o Cenário 4. Troque scenario_4 por scenario_1, scenario_2
-ou scenario_3 quando necessário.
-
-    cd "/home/cardozo/Desktop/TCC USP/ProjetodePesquisa/tcc-zero-trust-microsservicos"
-    export JWT_SECRET="$(openssl rand -hex 32)"
-    docker compose -f scenario_4/docker-compose.yml up -d --build --wait
-    curl --fail-with-body -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5000/api/v1/checkout
-    ./venv/bin/locust -f tests/locustfile.py --headless -u 50 -r 10 -t 60s -H http://127.0.0.1:5000 --csv=/tmp/scenario_4_manual
-    docker compose -f scenario_4/docker-compose.yml down --remove-orphans
-
-O JWT_SECRET só é necessário nos Cenários 2 e 4. O endpoint externo continua
-HTTP também nos Cenários 3 e 4, pois o mTLS medido é exclusivamente interno.
-
-## Cenário 5
-
-As ferramentas são instaladas localmente, com versão fixa e verificação de
-checksum:
-
-    bash scenario_5/install_tools.sh
-
-Rodada controlada completa. Por padrão são três pares de medições, sorteando
-baseline ou mesh primeiro e criando um cluster novo para cada medição:
-
-    bash scenario_5/run_scenario_5.sh
-
-Teste curto:
-
-    REPETITIONS=1 DURATION=15s USERS=10 SPAWN_RATE=5 bash scenario_5/run_scenario_5.sh
-
-Modo manual Kubernetes sem mesh:
-
-    bash scenario_5/start_manual.sh baseline
-    curl --fail-with-body -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout
-    bash scenario_5/stop_manual.sh
-
-Modo manual Kubernetes + Istio:
-
-    bash scenario_5/start_manual.sh mesh
-    curl --fail-with-body -H 'Content-Type: application/json' -d '{"item_id":"SKU-999","quantity":1}' http://127.0.0.1:5005/api/v1/checkout
-    bash scenario_5/stop_manual.sh
-
-No modo mesh, o Service B aceita somente requisições que tenham simultaneamente:
-
-- mTLS originado da ServiceAccount service-a;
-- JWT RS256 emitido por zero-trust-lab;
-- assunto checkout_service.
-
-## Organização dos resultados
-
-Cada execução produz uma estrutura semelhante a:
-
-    tests/runs/experiment_20260813_180000/
-      metadata.env
-      scenario_order.csv
-      round_01/
-        scenario_1/
-          results_stats.csv
-          results_stats_history.csv
-          results_failures.csv
-          resources.csv
-      analysis/
-        runs.csv
-        summary_by_scenario.csv
-        resource_summary_by_run.csv
-        performance_distributions.png
-
-Para refazer a análise:
-
-    ./venv/bin/python tests/generate_graphs.py tests/runs/experiment_20260813_180000
-
-Não compare diretamente os novos números com os CSVs antigos como se a
-metodologia fosse idêntica. O isolamento do mTLS, a validação de negócio, o
-aquecimento e as repetições mudaram deliberadamente o protocolo.
-
-Os diretórios cujo nome começa com smoke são apenas evidências de funcionamento
-com duração reduzida. Não use esses números como resultados científicos do TCC.
-
-## Validações locais
-
-    bash validate.sh
-
-Esse comando verifica a sintaxe de todos os scripts Bash e Python, valida os
-quatro arquivos Compose e, quando o venv existe, executa os testes de contrato.
-
-Os testes de contrato comprovam que:
-
-- erro interno não aparece como sucesso externo;
-- resposta de negócio inválida é rejeitada;
-- token expirado nunca é aceito;
-- entradas inválidas são rejeitadas.
-
-## Versões do Cenário 5
-
-As versões estão em scenario_5/versions.env. Esta revisão usa Istio 1.30.3,
-Kind 0.31.0, Kubernetes 1.35.0 e Metrics Server 0.8.1. O node image do Kind é
-fixado também por digest.
-
-Referências oficiais:
-
-- https://istio.io/latest/docs/releases/supported-releases/
-- https://github.com/kubernetes-sigs/kind/releases
-- https://kubernetes.io/releases/
-- https://github.com/kubernetes-sigs/metrics-server/releases
+Certificados, chaves privadas, o ambiente virtual e os binários baixados não são versionados e são gerados de novo pelos roteiros.

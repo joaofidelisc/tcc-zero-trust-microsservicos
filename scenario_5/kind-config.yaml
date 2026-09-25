@@ -1,0 +1,11 @@
+# Expõe a NodePort do Checkout no host (127.0.0.1:5005), caminho equivalente
+# à porta publicada dos cenários Docker, em vez de kubectl port-forward.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 30500
+        hostPort: 5005
+        listenAddress: "127.0.0.1"
+        protocol: TCP

@@ -1,0 +1,3 @@
+tls_version=TLSv1.3
+cipher=TLS_AES_256_GCM_SHA384
+key_bits=256
